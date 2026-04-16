@@ -186,7 +186,14 @@ async def _google_request(parts: list, gen_config: dict) -> str:
     }
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
     async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(url, json=payload)
+        try:
+            resp = await client.post(url, json=payload)
+        except httpx.ConnectError:
+            raise HTTPException(503, "Cannot reach Google AI API — check your internet connection and try again.")
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Google AI API timed out — the image may be too large or the network is slow.")
+        except httpx.RequestError as e:
+            raise HTTPException(503, f"Network error contacting Google AI: {type(e).__name__}")
         if resp.status_code != 200:
             raise HTTPException(resp.status_code,
                                 f"Google AI error ({resp.status_code}): {resp.text[:600]}")
@@ -205,6 +212,7 @@ async def _google_request(parts: list, gen_config: dict) -> str:
 
 
 async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict = None) -> str:
+    """Single-call Google AI request (used by batch marking and PDF chunks)."""
     parts = [
         {"text": prompt},
         {"inline_data": {"mime_type": mime_type, "data": file_b64}}
@@ -212,40 +220,16 @@ async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict =
     effective_schema = schema if schema is not None else MARKING_SCHEMA
     schema_label = "CHUNK" if schema is CHUNK_SCHEMA else "FULL"
 
-    # Attempt 1 — responseMimeType only (no schema)
-    # This gives the model freedom to generate a complete response.
-    # responseSchema causes Gemma 4 to stop early with finishReason=STOP after
-    # minimal valid JSON — so we try without schema first.
-    gen_config_no_schema = {
-        "temperature": 0.1,
-        "maxOutputTokens": 65536,
-        "topP": 0.9,
-        "responseMimeType": "application/json",
-    }
-    print(f"[AI] {GOOGLE_MODEL} | attempt 1: responseMimeType only ({schema_label})")
-    try:
-        text = await _google_request(parts, gen_config_no_schema)
-        print(f"[AI] Response preview: {text[:300]}")
-        # Validate it looks like real JSON with questions
-        if text.strip().startswith("{") and '"questions"' in text:
-            return text
-        print(f"[AI] Attempt 1 response doesn't look like full marking JSON — trying with schema")
-    except HTTPException as e:
-        if e.status_code in (400, 500):
-            print(f"[AI] Attempt 1 failed ({e.status_code}) — trying with responseSchema")
-        else:
-            raise
-
-    # Attempt 2 — with responseSchema (enforces JSON structure)
-    gen_config_with_schema = {
+    # Try with schema first for batch/PDF (these are already well-structured calls)
+    gen_config = {
         "temperature": 0.1,
         "maxOutputTokens": 65536,
         "topP": 0.9,
         "responseMimeType": "application/json",
         "responseSchema": effective_schema,
     }
-    print(f"[AI] {GOOGLE_MODEL} | attempt 2: responseMimeType + responseSchema ({schema_label})")
-    text = await _google_request(parts, gen_config_with_schema)
+    print(f"[AI] {GOOGLE_MODEL} | {schema_label} schema")
+    text = await _google_request(parts, gen_config)
     print(f"[AI] Response preview: {text[:300]}")
     return text
 
@@ -299,10 +283,17 @@ For EACH question and sub-question identify:
    - M mark: method mark — award for correct method even if final answer is wrong
    - A mark: accuracy mark — only if dependent M mark was earned
    - B mark: independent mark — regardless of method
-   - FT: follow-through — award if answer follows correctly from a previous wrong answer
+   - FT: follow-through — award if the answer follows correctly from a previous wrong answer
    - Do NOT penalise the same error twice across question parts
-   - Blank answer space → award 0, note "No attempt"
+   - Blank answer space → marks_awarded = 0, note "No attempt"
 4. For diagram/graph questions, describe what the student drew and assess correctness
+
+ACCURACY RULES — follow these strictly:
+- marks_awarded MUST be a whole number between 0 and marks_available (never exceed marks_available)
+- marks_available MUST match the integer in the brackets on the paper, e.g. [2] → 2
+- If you cannot clearly read the student's handwriting, describe what you can see and give benefit of the doubt for partially correct working
+- Do not award marks for a blank space even if the question is easy
+- Always check: does marks_awarded + (remaining marks) = marks_available for each question?
 
 FOR EACH QUESTION populate these fields:
 - question_number: e.g. "1(a)" or "3(b)(ii)"
@@ -409,8 +400,16 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
 
         try:
             raw    = await call_ai(prompt, chunk_b64, "application/pdf", schema=CHUNK_SCHEMA)
-            print(f"[PDF] Chunk {start+1}-{end} response preview: {raw[:200]}")
             result = parse_json(raw)
+            chunk_qs = result.get("questions", [])
+            q_nums   = [q.get("question_number", "?") for q in chunk_qs]
+            print(f"[PDF] Chunk {start+1}-{end}: response_len={len(raw)}  questions={len(chunk_qs)} — {q_nums}")
+            # Clamp marks per question
+            for q in chunk_qs:
+                avail   = max(0, int(q.get("marks_available", 0)))
+                awarded = max(0, int(q.get("marks_awarded",  0)))
+                q["marks_available"] = avail
+                q["marks_awarded"]   = min(awarded, avail)
         except Exception as ex:
             print(f"[PDF] Chunk {start+1}-{end} error: {ex}")
             result = {}
@@ -544,6 +543,104 @@ app.add_middleware(
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+def _clamp_marks(parsed: dict) -> dict:
+    """Ensure marks_awarded never exceeds marks_available on any question."""
+    for q in parsed.get("questions", []):
+        avail   = max(0, int(q.get("marks_available", 0)))
+        awarded = max(0, int(q.get("marks_awarded",  0)))
+        q["marks_available"] = avail
+        q["marks_awarded"]   = min(awarded, avail)
+    qs = parsed.get("questions", [])
+    parsed["total_marks_awarded"]   = sum(q.get("marks_awarded",  0) for q in qs)
+    parsed["total_marks_available"] = sum(q.get("marks_available", 0) for q in qs)
+    return parsed
+
+
+async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
+    """
+    Two-step marking strategy:
+      Step 1 — Send image with NO JSON enforcement so the model freely analyses
+               the whole paper and identifies every question in natural language.
+      Step 2 — Feed that analysis back as text-only (no image) and ask the model
+               to format it as JSON using responseSchema.
+               This avoids the schema-induced early stopping that happens when the
+               image + schema are combined in one call.
+    Fallback — if both steps fail, send image + schema directly (old approach).
+    """
+    image_parts = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": mime, "data": file_b64}}
+    ]
+
+    # ── Step 1: free-form analysis (no JSON, no schema) ──────────────────────
+    gen_free = {
+        "temperature": 0.1,
+        "maxOutputTokens": 65536,
+        "topP": 0.9,
+    }
+    print(f"[MARK] Step 1: free-form image analysis…")
+    analysis = ""
+    try:
+        analysis = await _google_request(image_parts, gen_free)
+        print(f"[MARK] Step 1: analysis_len={len(analysis)}")
+
+        # If step 1 already returned valid JSON with enough questions, use it
+        if analysis.strip().startswith("{") and '"questions"' in analysis:
+            parsed = parse_json(analysis)
+            qs = parsed.get("questions", [])
+            if len(qs) >= 3:
+                print(f"[MARK] Step 1 returned complete JSON ({len(qs)} questions) — done")
+                return _clamp_marks(parsed)
+    except HTTPException:
+        pass   # step 1 failed — still try step 2 with whatever we have
+
+    # ── Step 2: text-only JSON conversion using step 1's analysis ────────────
+    if analysis:
+        conversion_prompt = (
+            "You just analysed a Cambridge IGCSE Mathematics 0580 answer paper and produced "
+            "the following detailed marking analysis. Now convert your ENTIRE analysis into "
+            "the required JSON format. You MUST include every question you identified — "
+            "do not skip or merge any questions.\n\n"
+            f"YOUR ANALYSIS:\n{analysis[:10000]}\n\n"
+            "Convert all questions above to JSON. The 'questions' array must have one entry "
+            "for every question and sub-question you identified in your analysis."
+        )
+        gen_schema = {
+            "temperature": 0.1,
+            "maxOutputTokens": 65536,
+            "topP": 0.9,
+            "responseMimeType": "application/json",
+            "responseSchema": MARKING_SCHEMA,
+        }
+        print(f"[MARK] Step 2: converting analysis to JSON (text-only)…")
+        try:
+            text_parts = [{"text": conversion_prompt}]
+            json_text  = await _google_request(text_parts, gen_schema)
+            parsed     = parse_json(json_text)
+            qs         = parsed.get("questions", [])
+            q_nums     = [q.get("question_number", "?") for q in qs]
+            print(f"[MARK] Step 2: questions={len(qs)} — {q_nums}")
+            if len(qs) >= 2:
+                return _clamp_marks(parsed)
+        except Exception as ex:
+            print(f"[MARK] Step 2 failed: {ex}")
+
+    # ── Fallback: image + schema in one shot ─────────────────────────────────
+    print(f"[MARK] Fallback: image + schema…")
+    gen_schema_img = {
+        "temperature": 0.1,
+        "maxOutputTokens": 65536,
+        "topP": 0.9,
+        "responseMimeType": "application/json",
+        "responseSchema": MARKING_SCHEMA,
+    }
+    raw    = await _google_request(image_parts, gen_schema_img)
+    parsed = parse_json(raw)
+    qs     = parsed.get("questions", [])
+    print(f"[MARK] Fallback: questions={len(qs)} — {[q.get('question_number','?') for q in qs]}")
+    return _clamp_marks(parsed)
+
+
 @app.get("/api/health")
 async def health():
     provider_info = {"provider": "Google AI Studio", "model": GOOGLE_MODEL} if USE_GOOGLE else {"provider": "Ollama", "model": GEMMA_MODEL}
@@ -573,22 +670,15 @@ async def mark_paper(
     file_b64  = base64.b64encode(raw_bytes).decode()
     prompt    = paper_prompt(paper_type)
 
-    print(f"\n[MARK] {student_name} | {class_name} | {assessment_type} #{exercise_number} | {file.filename} ({mime}) | {len(raw_bytes)//1024}KB")
+    size_kb = len(raw_bytes) // 1024
+    print(f"\n[MARK] {student_name} | {class_name} | {assessment_type} #{exercise_number} | {file.filename} ({mime}) | {size_kb}KB")
+    if size_kb < 150 and mime != "application/pdf":
+        print(f"[MARK] WARNING: image is only {size_kb}KB — low resolution may reduce accuracy. Recommend photos >300KB.")
 
     if mime == "application/pdf":
         result = await mark_pdf_chunked(raw_bytes, paper_type)
     else:
-        raw    = await call_ai(prompt, file_b64, mime)
-        print(f"[MARK] Raw response length: {len(raw)} chars")
-        print(f"[MARK] Raw response (first 500 chars):\n{raw[:500]}\n")
-        parsed = parse_json(raw)
-        qs = parsed.get("questions", [])
-        q_nums = [q.get("question_number", "?") for q in qs]
-        print(f"[MARK] Questions parsed: {len(qs)} — {q_nums}")
-        # Recompute totals from individual question marks so the cover-page
-        # paper total never inflates the denominator
-        parsed["total_marks_awarded"]   = sum(q.get("marks_awarded",  0) for q in qs)
-        parsed["total_marks_available"] = sum(q.get("marks_available", 0) for q in qs)
+        parsed = await _mark_image_with_retry(prompt, file_b64, mime)
         result = finalise(parsed)
 
     # Attach assessment metadata to result so it's returned to frontend
