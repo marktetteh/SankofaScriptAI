@@ -195,11 +195,10 @@ async def _google_request(parts: list, gen_config: dict) -> str:
         if not candidates:
             raise HTTPException(500,
                                 f"AI returned no candidates: {json.dumps(data)[:400]}")
-        finish_reason = candidates[0].get("finishReason", "")
-        if finish_reason not in ("STOP", "MAX_TOKENS", ""):
-            print(f"[AI] finishReason={finish_reason}: {json.dumps(candidates[0])[:300]}")
+        finish_reason = candidates[0].get("finishReason", "unknown")
         out_parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in out_parts).strip()
+        print(f"[AI] finishReason={finish_reason}  response_len={len(text)}")
         if not text:
             print(f"[AI] Empty text. Candidate: {json.dumps(candidates[0])[:400]}")
         return text
@@ -213,35 +212,40 @@ async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict =
     effective_schema = schema if schema is not None else MARKING_SCHEMA
     schema_label = "CHUNK" if schema is CHUNK_SCHEMA else "FULL"
 
-    # Attempt 1 — with responseSchema (strongest JSON enforcement)
+    # Attempt 1 — responseMimeType only (no schema)
+    # This gives the model freedom to generate a complete response.
+    # responseSchema causes Gemma 4 to stop early with finishReason=STOP after
+    # minimal valid JSON — so we try without schema first.
+    gen_config_no_schema = {
+        "temperature": 0.1,
+        "maxOutputTokens": 65536,
+        "topP": 0.9,
+        "responseMimeType": "application/json",
+    }
+    print(f"[AI] {GOOGLE_MODEL} | attempt 1: responseMimeType only ({schema_label})")
+    try:
+        text = await _google_request(parts, gen_config_no_schema)
+        print(f"[AI] Response preview: {text[:300]}")
+        # Validate it looks like real JSON with questions
+        if text.strip().startswith("{") and '"questions"' in text:
+            return text
+        print(f"[AI] Attempt 1 response doesn't look like full marking JSON — trying with schema")
+    except HTTPException as e:
+        if e.status_code in (400, 500):
+            print(f"[AI] Attempt 1 failed ({e.status_code}) — trying with responseSchema")
+        else:
+            raise
+
+    # Attempt 2 — with responseSchema (enforces JSON structure)
     gen_config_with_schema = {
         "temperature": 0.1,
-        "maxOutputTokens": 8192,
+        "maxOutputTokens": 65536,
         "topP": 0.9,
         "responseMimeType": "application/json",
         "responseSchema": effective_schema,
     }
-    print(f"[AI] {GOOGLE_MODEL} | attempt 1: responseMimeType + responseSchema ({schema_label})")
-    try:
-        text = await _google_request(parts, gen_config_with_schema)
-        print(f"[AI] Response preview: {text[:300]}")
-        return text
-    except HTTPException as e:
-        # If the API rejected the schema (400 / 500 from Google), fall back
-        if e.status_code in (400, 500):
-            print(f"[AI] responseSchema rejected ({e.status_code}) — retrying without schema")
-        else:
-            raise
-
-    # Attempt 2 — without responseSchema, just responseMimeType
-    gen_config_no_schema = {
-        "temperature": 0.1,
-        "maxOutputTokens": 8192,
-        "topP": 0.9,
-        "responseMimeType": "application/json",
-    }
-    print(f"[AI] {GOOGLE_MODEL} | attempt 2: responseMimeType only (no schema)")
-    text = await _google_request(parts, gen_config_no_schema)
+    print(f"[AI] {GOOGLE_MODEL} | attempt 2: responseMimeType + responseSchema ({schema_label})")
+    text = await _google_request(parts, gen_config_with_schema)
     print(f"[AI] Response preview: {text[:300]}")
     return text
 
@@ -282,9 +286,13 @@ HOW THIS PAPER IS LAID OUT:
 - Answers are on dotted lines, blank spaces, or drawn directly on diagrams
 - Even when pen colour matches printed text, handwriting is identifiable by irregular letterforms
 
-YOUR TASK:
-1. Go through the paper page by page
-2. For EACH question and sub-question (e.g. 1(a), 1(b)(i), 2(a)…) identify:
+YOUR TASK — follow these steps in order:
+
+STEP 1 — SCAN FIRST: Before writing anything, scan the entire paper from top to bottom. Note EVERY question number you can see (e.g. 1(a), 1(b)(i), 1(b)(ii), 1(c), 2(a)…). Count them all. Do not start generating until you have identified every question on the page.
+
+STEP 2 — MARK EACH ONE: For every question you identified in Step 1, add an entry to the "questions" array. Do not skip any. If you identified 5 questions in Step 1, the array must have exactly 5 entries.
+
+For EACH question and sub-question identify:
    - The printed question text and its bracketed mark allocation
    - What the student wrote or drew as their answer/working
 3. Mark each answer using Cambridge IGCSE M/A/B mark conventions:
@@ -342,7 +350,7 @@ HOW THIS PAPER IS LAID OUT:
 - STUDENT ANSWERS are HANDWRITTEN — irregular human strokes (any pen colour or pencil)
 - Answers are on dotted lines, blank spaces, or drawn directly on diagrams
 
-TASK: For every question and sub-question visible on these pages:
+TASK — SCAN FIRST, then mark. Before writing the JSON, scan all pages and note every question number visible (1(a), 1(b)(i), 2(a), etc.). Then include every one of them in the "questions" array.
 1. Read the printed question text and its bracketed mark allocation
 2. Find the student's handwritten answer/working
 3. Mark using Cambridge conventions (M/A/B marks, follow-through, no double penalty)
@@ -571,11 +579,14 @@ async def mark_paper(
         result = await mark_pdf_chunked(raw_bytes, paper_type)
     else:
         raw    = await call_ai(prompt, file_b64, mime)
-        print(f"[MARK] Raw response (first 300 chars):\n{raw[:300]}\n")
+        print(f"[MARK] Raw response length: {len(raw)} chars")
+        print(f"[MARK] Raw response (first 500 chars):\n{raw[:500]}\n")
         parsed = parse_json(raw)
+        qs = parsed.get("questions", [])
+        q_nums = [q.get("question_number", "?") for q in qs]
+        print(f"[MARK] Questions parsed: {len(qs)} — {q_nums}")
         # Recompute totals from individual question marks so the cover-page
         # paper total never inflates the denominator
-        qs = parsed.get("questions", [])
         parsed["total_marks_awarded"]   = sum(q.get("marks_awarded",  0) for q in qs)
         parsed["total_marks_available"] = sum(q.get("marks_available", 0) for q in qs)
         result = finalise(parsed)
