@@ -170,11 +170,8 @@ CHUNK_SCHEMA = {
 }
 
 
-async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict = None) -> str:
-    parts = [
-        {"text": prompt},
-        {"inline_data": {"mime_type": mime_type, "data": file_b64}}
-    ]
+async def _google_request(parts: list, gen_config: dict) -> str:
+    """Internal: send one request to the Google AI API, return text content."""
     payload = {
         "system_instruction": {
             "parts": [{"text": (
@@ -185,37 +182,68 @@ async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict =
             )}]
         },
         "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 8192,
-            "topP": 0.9,
-            "responseMimeType": "application/json",
-            "responseSchema": schema if schema is not None else MARKING_SCHEMA,
-        }
+        "generationConfig": gen_config,
     }
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
-    print(f"[AI] Calling model: {GOOGLE_MODEL}  schema={'CHUNK' if schema is CHUNK_SCHEMA else 'FULL'}")
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.post(url, json=payload)
         if resp.status_code != 200:
-            error_detail = resp.text[:600]
-            print(f"[AI] ERROR {resp.status_code}: {error_detail}")
-            raise HTTPException(resp.status_code, f"Google AI error ({resp.status_code}): {error_detail}")
+            raise HTTPException(resp.status_code,
+                                f"Google AI error ({resp.status_code}): {resp.text[:600]}")
         data = resp.json()
-        # Log finish reason if present — helps diagnose schema rejection
         candidates = data.get("candidates", [])
         if not candidates:
-            print(f"[AI] No candidates returned. Full response: {json.dumps(data)[:400]}")
-            raise HTTPException(500, "AI returned no candidates — check model name or API key")
+            raise HTTPException(500,
+                                f"AI returned no candidates: {json.dumps(data)[:400]}")
         finish_reason = candidates[0].get("finishReason", "")
         if finish_reason not in ("STOP", "MAX_TOKENS", ""):
-            print(f"[AI] Unexpected finishReason: {finish_reason} — full candidate: {json.dumps(candidates[0])[:400]}")
+            print(f"[AI] finishReason={finish_reason}: {json.dumps(candidates[0])[:300]}")
         out_parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in out_parts).strip()
         if not text:
             print(f"[AI] Empty text. Candidate: {json.dumps(candidates[0])[:400]}")
+        return text
+
+
+async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict = None) -> str:
+    parts = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": mime_type, "data": file_b64}}
+    ]
+    effective_schema = schema if schema is not None else MARKING_SCHEMA
+    schema_label = "CHUNK" if schema is CHUNK_SCHEMA else "FULL"
+
+    # Attempt 1 — with responseSchema (strongest JSON enforcement)
+    gen_config_with_schema = {
+        "temperature": 0.1,
+        "maxOutputTokens": 8192,
+        "topP": 0.9,
+        "responseMimeType": "application/json",
+        "responseSchema": effective_schema,
+    }
+    print(f"[AI] {GOOGLE_MODEL} | attempt 1: responseMimeType + responseSchema ({schema_label})")
+    try:
+        text = await _google_request(parts, gen_config_with_schema)
         print(f"[AI] Response preview: {text[:300]}")
         return text
+    except HTTPException as e:
+        # If the API rejected the schema (400 / 500 from Google), fall back
+        if e.status_code in (400, 500):
+            print(f"[AI] responseSchema rejected ({e.status_code}) — retrying without schema")
+        else:
+            raise
+
+    # Attempt 2 — without responseSchema, just responseMimeType
+    gen_config_no_schema = {
+        "temperature": 0.1,
+        "maxOutputTokens": 8192,
+        "topP": 0.9,
+        "responseMimeType": "application/json",
+    }
+    print(f"[AI] {GOOGLE_MODEL} | attempt 2: responseMimeType only (no schema)")
+    text = await _google_request(parts, gen_config_no_schema)
+    print(f"[AI] Response preview: {text[:300]}")
+    return text
 
 async def call_ollama(prompt: str, file_b64: str) -> str:
     payload = {
