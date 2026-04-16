@@ -123,25 +123,78 @@ def save_submission(conn, student_name, class_name, result,
 
 # ── AI Callers ────────────────────────────────────────────────────────────────
 
-async def call_google(prompt: str, file_b64: str, mime_type: str) -> str:
+QUESTION_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "question_number": {"type": "STRING"},
+        "question_text":   {"type": "STRING"},
+        "student_answer":  {"type": "STRING"},
+        "marks_available": {"type": "NUMBER"},
+        "marks_awarded":   {"type": "NUMBER"},
+        "mark_breakdown":  {"type": "STRING"},
+        "correct":         {"type": "BOOLEAN"},
+        "feedback":        {"type": "STRING"},
+    },
+    "required": ["question_number","question_text","student_answer",
+                 "marks_available","marks_awarded","feedback"]
+}
+
+MARKING_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "paper_type":             {"type": "STRING"},
+        "paper_code":             {"type": "STRING"},
+        "total_marks_available":  {"type": "NUMBER"},
+        "total_marks_awarded":    {"type": "NUMBER"},
+        "percentage":             {"type": "NUMBER"},
+        "grade":                  {"type": "STRING"},
+        "questions":              {"type": "ARRAY", "items": QUESTION_SCHEMA},
+        "overall_feedback":       {"type": "STRING"},
+        "teacher_notes":          {"type": "STRING"},
+    },
+    "required": ["paper_type","total_marks_available","questions","overall_feedback"]
+}
+
+# Lighter schema used for each PDF chunk (no grade/percentage — those are computed after merging)
+CHUNK_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "paper_type":            {"type": "STRING"},
+        "paper_code":            {"type": "STRING"},
+        "total_marks_available": {"type": "NUMBER"},
+        "questions":             {"type": "ARRAY", "items": QUESTION_SCHEMA},
+        "chunk_feedback":        {"type": "STRING"},
+        "teacher_notes":         {"type": "STRING"},
+    },
+    "required": ["paper_type", "questions"]
+}
+
+
+async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict = None) -> str:
     parts = [
         {"text": prompt},
         {"inline_data": {"mime_type": mime_type, "data": file_b64}}
     ]
     payload = {
         "system_instruction": {
-            "parts": [{"text": "You are a Cambridge IGCSE Mathematics examiner. You ONLY output valid JSON. Never output explanations, descriptions, or any text outside the JSON object. Your entire response must start with { and end with }."}]
+            "parts": [{"text": (
+                "You are an experienced Cambridge IGCSE Mathematics 0580 examiner. "
+                "Your response MUST be a single valid JSON object with no text before or after it. "
+                "Follow the provided response schema exactly. "
+                "Never include explanations, markdown, or prose outside the JSON structure."
+            )}]
         },
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 0.1,
             "maxOutputTokens": 8192,
             "topP": 0.9,
-            "responseMimeType": "application/json"
+            "responseMimeType": "application/json",
+            "responseSchema": schema if schema is not None else MARKING_SCHEMA,
         }
     }
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
-    print(f"[AI] Calling model: {GOOGLE_MODEL}")
+    print(f"[AI] Calling model: {GOOGLE_MODEL}  schema={'CHUNK' if schema is CHUNK_SCHEMA else 'FULL'}")
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.post(url, json=payload)
         if resp.status_code != 200:
@@ -149,15 +202,19 @@ async def call_google(prompt: str, file_b64: str, mime_type: str) -> str:
             print(f"[AI] ERROR {resp.status_code}: {error_detail}")
             raise HTTPException(resp.status_code, f"Google AI error ({resp.status_code}): {error_detail}")
         data = resp.json()
-        # Check for content filtering or empty response
+        # Log finish reason if present — helps diagnose schema rejection
         candidates = data.get("candidates", [])
         if not candidates:
             print(f"[AI] No candidates returned. Full response: {json.dumps(data)[:400]}")
             raise HTTPException(500, "AI returned no candidates — check model name or API key")
+        finish_reason = candidates[0].get("finishReason", "")
+        if finish_reason not in ("STOP", "MAX_TOKENS", ""):
+            print(f"[AI] Unexpected finishReason: {finish_reason} — full candidate: {json.dumps(candidates[0])[:400]}")
         out_parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in out_parts)
+        text = "".join(p.get("text", "") for p in out_parts).strip()
         if not text:
-            print(f"[AI] Empty text in response. Candidate: {json.dumps(candidates[0])[:400]}")
+            print(f"[AI] Empty text. Candidate: {json.dumps(candidates[0])[:400]}")
+        print(f"[AI] Response preview: {text[:300]}")
         return text
 
 async def call_ollama(prompt: str, file_b64: str) -> str:
@@ -173,9 +230,9 @@ async def call_ollama(prompt: str, file_b64: str) -> str:
         resp.raise_for_status()
         return resp.json().get("response", "")
 
-async def call_ai(prompt: str, file_b64: str, mime_type: str = "image/jpeg") -> str:
+async def call_ai(prompt: str, file_b64: str, mime_type: str = "image/jpeg", schema: dict = None) -> str:
     if USE_GOOGLE:
-        return await call_google(prompt, file_b64, mime_type)
+        return await call_google(prompt, file_b64, mime_type, schema)
     return await call_ollama(prompt, file_b64)
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -186,63 +243,48 @@ def paper_prompt(paper_type_hint: str = "Auto-detect") -> str:
         if paper_type_hint != "Auto-detect"
         else "This is a Cambridge IGCSE Mathematics 0580 paper (Core or Extended — detect from the paper)."
     )
-    return f"""IMPORTANT: You must respond with ONLY a valid JSON object. No explanations, no descriptions, no markdown — just the raw JSON starting with {{ and ending with }}.
-
-You are an experienced Cambridge IGCSE Mathematics 0580 examiner marking a student's completed answer paper.
+    return f"""You are an experienced Cambridge IGCSE Mathematics 0580 examiner marking a student's completed answer paper.
 
 {hint}
 
 HOW THIS PAPER IS LAID OUT:
-- The QUESTIONS are TYPESET/PRINTED text — uniform, clean, machine-made font (black ink from a printer)
-- The mark allocation for each question is shown in brackets at the end of the question, e.g. [2] or [3]
-- The student's ANSWERS are HANDWRITTEN — you can tell because the strokes are irregular, human, and written in pen or pencil (any colour: black, blue, red, pencil — the key is it looks handwritten, not printed)
-- Answers are written on dotted lines, in blank spaces beneath each question, or directly inside/beside diagrams
-- Working/method steps may also be handwritten anywhere in the answer space
-- For diagram questions (grids, graphs, geometric drawings), the student has drawn or labelled directly on the diagram in handwriting
-- Even if the pen colour matches the printed text, you can distinguish handwriting from typeset text by the irregular letterforms and stroke variation
+- QUESTIONS are TYPESET/PRINTED — uniform, clean machine font
+- Mark allocations are in brackets, e.g. [2] or [3] — these are the authoritative marks per question
+- STUDENT ANSWERS are HANDWRITTEN — irregular human strokes in pen or pencil (any colour)
+- Answers are on dotted lines, blank spaces, or drawn directly on diagrams
+- Even when pen colour matches printed text, handwriting is identifiable by irregular letterforms
 
-YOUR TASK — do all of the following:
+YOUR TASK:
 1. Go through the paper page by page
-2. For EACH question and sub-question (e.g. 1a, 1b(i), 1b(ii), 1c…), identify:
-   - The printed question text
-   - The mark allocation in brackets
-   - What the student has written or drawn as their answer/working
-3. Separate the printed question from the student's handwritten response
-4. Mark each answer using Cambridge IGCSE conventions:
-   - M mark = Method mark — award for a correct method even if the final answer is wrong
-   - A mark = Accuracy mark — only award if the dependent M mark was also earned
-   - B mark = Independent mark — award regardless of method shown
-   - FT (Follow-through) — award if the answer follows correctly from a previous wrong answer
-   - Do NOT penalise the same error twice across parts of a question
-   - If the answer space is blank or shows no attempt, award 0
-5. For diagram/graph questions, describe what the student drew and assess correctness
+2. For EACH question and sub-question (e.g. 1(a), 1(b)(i), 2(a)…) identify:
+   - The printed question text and its bracketed mark allocation
+   - What the student wrote or drew as their answer/working
+3. Mark each answer using Cambridge IGCSE M/A/B mark conventions:
+   - M mark: method mark — award for correct method even if final answer is wrong
+   - A mark: accuracy mark — only if dependent M mark was earned
+   - B mark: independent mark — regardless of method
+   - FT: follow-through — award if answer follows correctly from a previous wrong answer
+   - Do NOT penalise the same error twice across question parts
+   - Blank answer space → award 0, note "No attempt"
+4. For diagram/graph questions, describe what the student drew and assess correctness
 
-IMPORTANT: The total marks available is written on the cover page (e.g. "Total marks for this paper is 104"). Use this if visible.
+FOR EACH QUESTION populate these fields:
+- question_number: e.g. "1(a)" or "3(b)(ii)"
+- question_text: the full printed question
+- student_answer: exactly what the student wrote/drew, or "No attempt"
+- marks_available: the integer from the brackets on the paper
+- marks_awarded: integer you are awarding
+- mark_breakdown: e.g. "M1 awarded – correct method; A0 – wrong final answer"
+- correct: true if fully correct, false otherwise
+- feedback: 1–2 sentences of specific helpful feedback
 
-Return ONLY valid JSON. No explanation before or after. Start with {{ and end with }}.
-
-{{
-  "paper_type": "Core or Extended",
-  "paper_code": "<e.g. 0580/33 if visible on the paper>",
-  "total_marks_available": <integer>,
-  "total_marks_awarded": <integer>,
-  "percentage": <number rounded to 1 decimal place>,
-  "grade": "<A* | A | B | C | D | E | U>",
-  "questions": [
-    {{
-      "question_number": "1(a)",
-      "question_text": "<the full printed question text>",
-      "student_answer": "<exactly what the student wrote or drew — 'No attempt' if blank>",
-      "marks_available": <integer>,
-      "marks_awarded": <integer>,
-      "mark_breakdown": "<e.g. B1 awarded — correct answer 1302596>",
-      "correct": <true if fully correct, false otherwise>,
-      "feedback": "<1-2 sentences of specific, helpful feedback>"
-    }}
-  ],
-  "overall_feedback": "<2-3 sentences of encouraging and specific feedback addressed directly to the student>",
-  "teacher_notes": "<1-2 sentences for the teacher highlighting patterns, e.g. strong in algebra but losing marks on diagram questions>"
-}}"""
+FOR THE OVERALL RESULT populate:
+- paper_type: "Core" or "Extended"
+- paper_code: e.g. "0580/33" if visible on the cover, otherwise empty string
+- total_marks_available: SUM of all question marks_available values
+- total_marks_awarded: SUM of all question marks_awarded values
+- overall_feedback: 2–3 encouraging sentences addressed directly to the student
+- teacher_notes: 1–2 sentences for the teacher highlighting patterns"""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -253,7 +295,7 @@ def chunk_prompt(page_start: int, page_end: int, total_pages: int,
         context = (
             f"These are pages {page_start}–{page_end} of {total_pages} of a Cambridge IGCSE "
             f"Mathematics 0580 answer paper. The cover page is included — read it for the "
-            f"paper code, paper type (Core/Extended), and total marks for the whole paper."
+            f"paper code and paper type (Core or Extended)."
         )
     else:
         context = (
@@ -262,44 +304,37 @@ def chunk_prompt(page_start: int, page_end: int, total_pages: int,
             f"This is a continuation — extract only the questions that appear on these pages."
         )
 
-    return f"""IMPORTANT: Respond with ONLY a valid JSON object. No text before or after — just raw JSON starting with {{ and ending with }}.
-
-You are an experienced Cambridge IGCSE Mathematics 0580 examiner.
+    return f"""You are an experienced Cambridge IGCSE Mathematics 0580 examiner.
 
 {context}
 
 HOW THIS PAPER IS LAID OUT:
 - QUESTIONS are TYPESET/PRINTED — uniform machine font
+- Mark allocations are in brackets, e.g. [2] or [3] — use these as marks_available
 - STUDENT ANSWERS are HANDWRITTEN — irregular human strokes (any pen colour or pencil)
-- Mark allocations are in brackets, e.g. [2] or [3]
 - Answers are on dotted lines, blank spaces, or drawn directly on diagrams
 
 TASK: For every question and sub-question visible on these pages:
-1. Read the printed question text and its mark allocation
+1. Read the printed question text and its bracketed mark allocation
 2. Find the student's handwritten answer/working
-3. Mark it using Cambridge conventions (M/A/B marks, follow-through, no double penalty)
-4. If blank → 0 marks, note "No attempt"
+3. Mark using Cambridge conventions (M/A/B marks, follow-through, no double penalty)
+4. If blank → marks_awarded = 0, student_answer = "No attempt"
 
-Return ONLY valid JSON — start with {{ end with }}. No text before or after.
+FOR EACH QUESTION populate:
+- question_number: e.g. "1(a)" or "3(b)(ii)"
+- question_text: the full printed question
+- student_answer: exactly what the student wrote/drew, or "No attempt"
+- marks_available: the integer from the brackets
+- marks_awarded: integer you are awarding
+- mark_breakdown: e.g. "M1 awarded – correct method; A0 – wrong answer"
+- correct: true if fully correct, false otherwise
+- feedback: 1–2 sentences of specific helpful feedback
 
-{{
-  "paper_type": "Core or Extended",
-  "paper_code": "<e.g. 0580/33 — only fill if visible on cover page, else omit>",
-  "total_marks_available": <total marks for the whole paper from cover page, 0 if not visible>,
-  "questions": [
-    {{
-      "question_number": "<e.g. 1(a) or 3(b)(ii)>",
-      "question_text": "<printed question text>",
-      "student_answer": "<handwritten answer/working, or 'No attempt'>",
-      "marks_available": <integer>,
-      "marks_awarded": <integer>,
-      "mark_breakdown": "<e.g. M1 awarded – correct method; A0 – wrong answer>",
-      "correct": <true or false>,
-      "feedback": "<1–2 sentences specific feedback>"
-    }}
-  ],
-  "chunk_feedback": "<brief observation about performance on these pages only>"
-}}"""
+Also populate:
+- paper_type: "Core" or "Extended"
+- paper_code: paper code from cover page (e.g. "0580/33") if visible, else empty string
+- total_marks_available: total marks for the WHOLE paper from cover page if visible (0 if not on these pages)
+- chunk_feedback: one sentence observation about student performance on these pages"""
 
 
 async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
@@ -337,7 +372,7 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
         print(f"[PDF] Marking pages {start+1}–{end}…")
 
         try:
-            raw    = await call_ai(prompt, chunk_b64, "application/pdf")
+            raw    = await call_ai(prompt, chunk_b64, "application/pdf", schema=CHUNK_SCHEMA)
             print(f"[PDF] Chunk {start+1}-{end} response preview: {raw[:200]}")
             result = parse_json(raw)
         except Exception as ex:
@@ -379,24 +414,45 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
 
 def parse_json(text: str) -> dict:
     text = text.strip()
+
     # Strip markdown code fences
-    if text.startswith("```"):
-        lines = text.split("\n")[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
+    if "```" in text:
+        import re
+        m = re.search(r'```(?:json)?\s*([\s\S]+?)\s*```', text)
+        if m:
+            text = m.group(1).strip()
+
     # Direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Find outermost { }
+
+    # Find outermost { } — handles preamble text before the JSON
+    s = text.find("{")
+    if s != -1:
+        # Walk from the end to find the matching closing brace
+        depth = 0
+        for i, ch in enumerate(text[s:], start=s):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[s:i+1])
+                    except json.JSONDecodeError:
+                        break
+
+    # Last resort — strip everything before first { and after last }
     s, e = text.find("{"), text.rfind("}") + 1
     if s != -1 and e > s:
         try:
             return json.loads(text[s:e])
         except json.JSONDecodeError:
             pass
+
+    print(f"[PARSE] Failed to extract JSON from response (len={len(text)}): {text[:300]}")
     # Fallback
     return {
         "paper_type": "Unknown",
@@ -571,6 +627,59 @@ async def mark_batch(
         "total_marked":  len(results),
         "class_average": avg,
         "results":       results
+    }
+
+
+@app.patch("/api/submissions/{submission_id}/amend")
+async def amend_submission(submission_id: str, payload: dict):
+    """
+    Teacher amendment — update marks for one or more questions and recompute totals.
+    Payload: { "questions": [ { "question_number": "1(a)", "marks_awarded": 2 }, ... ] }
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT questions_data, max_marks FROM submissions WHERE id=?",
+            (submission_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Submission not found")
+
+        questions = json.loads(row["questions_data"] or "[]")
+        amendments = {q["question_number"]: q["marks_awarded"]
+                      for q in payload.get("questions", [])}
+
+        # Apply amendments
+        for q in questions:
+            qn = q.get("question_number", "")
+            if qn in amendments:
+                new_val = int(amendments[qn])
+                available = q.get("marks_available", 0)
+                # Clamp to valid range
+                q["marks_awarded"] = max(0, min(new_val, available))
+                q["amended"] = True   # flag so UI can show it was teacher-edited
+
+        # Recompute totals
+        awarded   = sum(q.get("marks_awarded",  0) for q in questions)
+        available = sum(q.get("marks_available", 0) for q in questions)
+        pct       = round((awarded / available) * 100, 1) if available > 0 else 0
+        grade     = grade_from_pct(pct)
+
+        conn.execute("""
+            UPDATE submissions
+            SET questions_data=?, marks_awarded=?, percentage=?, grade=?
+            WHERE id=?""",
+            (json.dumps(questions), awarded, pct, grade, submission_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "submission_id":       submission_id,
+        "total_marks_awarded": awarded,
+        "total_marks_available": available,
+        "percentage":          pct,
+        "grade":               grade,
+        "questions":           questions,
     }
 
 

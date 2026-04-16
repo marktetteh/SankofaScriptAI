@@ -109,9 +109,20 @@ textarea{resize:vertical;min-height:80px;}
 .chip-full{background:rgba(52,211,153,0.15);color:var(--green);}
 .chip-part{background:rgba(251,191,36,0.15);color:var(--yellow);}
 .chip-zero{background:rgba(248,113,113,0.12);color:var(--red);}
+.chip-amended{background:rgba(251,146,60,0.15);color:var(--orange);outline:1px dashed var(--orange);}
 
 .feedback-box{background:rgba(108,99,255,0.08);border:1px solid rgba(108,99,255,0.2);border-radius:8px;padding:14px;font-size:13px;line-height:1.6;}
 .teacher-box{background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;padding:14px;font-size:13px;line-height:1.6;margin-top:10px;}
+
+/* ── Mark amendment ── */
+.edit-mark-btn{opacity:0;background:none;border:none;cursor:pointer;color:var(--text2);font-size:13px;padding:2px 5px;border-radius:5px;transition:opacity 0.15s;}
+.edit-mark-btn:hover{color:var(--accent);background:rgba(108,99,255,0.1);}
+tr:hover .edit-mark-btn{opacity:1;}
+.mark-edit-input{width:42px;padding:3px 6px;background:var(--surface2);border:1px solid var(--accent);border-radius:6px;color:var(--text);font-size:12px;font-weight:600;text-align:center;}
+.mark-edit-input:focus{outline:none;}
+.amend-bar{background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:8px;padding:10px 14px;margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.amend-bar span{font-size:12px;color:var(--orange);}
+.unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);flex-shrink:0;}
 
 /* ── Batch rows ── */
 .batch-row{display:flex;align-items:center;gap:10px;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
@@ -524,52 +535,68 @@ function renderResult(data, containerId) {
   const awarded = data.total_marks_awarded ?? 0;
   const avail   = data.total_marks_available ?? 0;
   const name    = data.student_name || 'Student';
+  const subId   = data.submission_id || '';
+  const cardId  = 'card-' + (subId || containerId);
 
   // Progress bar fill colour
   const barColor = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
 
   const qRows = (data.questions || []).map((q, i) => {
-    const ma = q.marks_awarded ?? 0;
-    const mx = q.marks_available ?? 0;
-    return `<tr>
-      <td style="font-weight:600;color:var(--accent);">Q${q.question_number ?? i+1}</td>
-      <td style="max-width:260px;line-height:1.5;">${escHtml(q.question_text || '—')}</td>
-      <td style="max-width:200px;color:var(--text2);font-size:12px;line-height:1.4;">${escHtml(q.student_answer || 'No attempt')}</td>
-      <td style="white-space:nowrap;">${markChip(ma, mx)}</td>
+    const ma      = q.marks_awarded ?? 0;
+    const mx      = q.marks_available ?? 0;
+    const qn      = q.question_number ?? i+1;
+    const amended = q.amended ? 'chip-amended' : '';
+    const chip    = q.amended
+      ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+      : markChip(ma, mx);
+    return `<tr id="qrow-${cardId}-${i}">
+      <td style="font-weight:600;color:var(--accent);">Q${qn}</td>
+      <td style="max-width:220px;line-height:1.5;">${escHtml(q.question_text || '—')}</td>
+      <td style="max-width:180px;color:var(--text2);font-size:12px;line-height:1.4;">${escHtml(q.student_answer || 'No attempt')}</td>
+      <td style="white-space:nowrap;">
+        <span id="chip-${cardId}-${i}">${chip}</span>
+        ${subId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${cardId}',${i},'${qn}',${ma},${mx},'${subId}')">✏️</button>` : ''}
+      </td>
       <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback || '')}</td>
     </tr>`;
   }).join('');
 
   el.innerHTML = `
-    <div class="card" style="margin-top:0;">
+    <div class="card" id="${cardId}" style="margin-top:0;">
       <div class="result-hero">
-        <div class="grade-badge ${gradeClass(g)}">${g}</div>
+        <div class="grade-badge ${gradeClass(g)}" id="gbadge-${cardId}">${g}</div>
         <div class="hero-info">
           <div class="hero-name">${escHtml(name)}</div>
-          <div class="hero-marks">${awarded} / ${avail} marks &nbsp;·&nbsp; ${data.paper_type || ''}</div>
+          <div class="hero-marks" id="hmarks-${cardId}">${awarded} / ${avail} marks &nbsp;·&nbsp; ${data.paper_type || ''}</div>
           <div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             ${data.assessment_type ? `<span class="tag" style="background:rgba(108,99,255,0.15);color:var(--accent);">${escHtml(data.assessment_type)} ${data.exercise_number ?? ''}</span>` : ''}
             <span style="font-size:11px;color:var(--text2);">📅 ${data.marked_at || new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span>
           </div>
           <div class="progress-bar" style="margin-top:8px;width:200px;">
-            <div class="progress-fill" style="width:${Math.min(pct,100)}%;background:${barColor};"></div>
+            <div class="progress-fill" id="hbar-${cardId}" style="width:${Math.min(pct,100)}%;background:${barColor};"></div>
           </div>
         </div>
-        <div class="hero-pct">${pct}%</div>
+        <div class="hero-pct" id="hpct-${cardId}">${pct}%</div>
       </div>
 
       ${qRows ? `
       <div style="overflow-x:auto;margin-bottom:16px;">
-        <table class="q-table">
+        <table class="q-table" id="qtable-${cardId}">
           <thead><tr>
             <th style="width:36px;">#</th>
             <th>Question</th>
             <th>Student's Answer</th>
-            <th style="width:70px;">Marks</th>
+            <th style="width:90px;">Marks</th>
             <th>Feedback</th>
           </tr></thead>
           <tbody>${qRows}</tbody>
         </table>
+      </div>
+      <div id="amendbar-${cardId}" style="display:none;" class="amend-bar">
+        <div class="unsaved-dot"></div>
+        <span>You have unsaved amendments</span>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${cardId}','${subId}')">💾 Save Changes</button>
+        <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${cardId}')">Cancel</button>
       </div>` : ''}
 
       ${data.overall_feedback ? `
@@ -593,6 +620,95 @@ function renderResult(data, containerId) {
         <span style="font-size:12px;color:var(--text2);">Result saved to History</span>
       </div>` : ''}
     </div>`;
+}
+
+// ── Mark Amendment ────────────────────────────────────────────────────────────
+
+const pendingAmendments = {}; // cardId → { questionNumber: newMarks }
+
+function startEditMark(cardId, rowIdx, qNum, current, max, subId) {
+  const chipEl = document.getElementById(`chip-${cardId}-${rowIdx}`);
+  if (!chipEl) return;
+  // Replace chip with inline input
+  chipEl.innerHTML = `
+    <input class="mark-edit-input" id="inp-${cardId}-${rowIdx}"
+      type="number" min="0" max="${max}" value="${current}"
+      onchange="recordAmendment('${cardId}','${qNum}',this.value,'${rowIdx}',${max})"
+      onblur="recordAmendment('${cardId}','${qNum}',this.value,'${rowIdx}',${max})"
+    >
+    <span style="font-size:11px;color:var(--text2);">/${max}</span>`;
+  document.getElementById(`inp-${cardId}-${rowIdx}`)?.focus();
+  // Show the save bar
+  const bar = document.getElementById(`amendbar-${cardId}`);
+  if (bar) bar.style.display = 'flex';
+}
+
+function recordAmendment(cardId, qNum, val, rowIdx, max) {
+  const clamped = Math.max(0, Math.min(parseInt(val) || 0, max));
+  if (!pendingAmendments[cardId]) pendingAmendments[cardId] = {};
+  pendingAmendments[cardId][qNum] = clamped;
+  // Update the input to show clamped value
+  const inp = document.getElementById(`inp-${cardId}-${rowIdx}`);
+  if (inp) inp.value = clamped;
+}
+
+async function saveAmendments(cardId, subId) {
+  const amendments = pendingAmendments[cardId];
+  if (!amendments || !Object.keys(amendments).length) return;
+
+  const questions = Object.entries(amendments).map(([qn, ma]) => ({
+    question_number: qn, marks_awarded: ma
+  }));
+
+  try {
+    const resp = await fetch(`${API}/submissions/${subId}/amend`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions })
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || 'Save failed');
+    const updated = await resp.json();
+
+    // Update hero totals
+    const barColor = updated.percentage >= 70 ? 'var(--green)' : updated.percentage >= 50 ? 'var(--yellow)' : 'var(--red)';
+    const hmarks = document.getElementById(`hmarks-${cardId}`);
+    const hpct   = document.getElementById(`hpct-${cardId}`);
+    const hbar   = document.getElementById(`hbar-${cardId}`);
+    const gbadge = document.getElementById(`gbadge-${cardId}`);
+    if (hmarks) hmarks.innerHTML = `${updated.total_marks_awarded} / ${updated.total_marks_available} marks`;
+    if (hpct)   hpct.textContent = `${updated.percentage}%`;
+    if (hbar)   { hbar.style.width = `${Math.min(updated.percentage,100)}%`; hbar.style.background = barColor; }
+    if (gbadge) { gbadge.textContent = updated.grade; gbadge.className = `grade-badge ${gradeClass(updated.grade)}`; }
+
+    // Update each amended chip
+    updated.questions.forEach((q, i) => {
+      const chipEl = document.getElementById(`chip-${cardId}-${i}`);
+      if (!chipEl) return;
+      const ma = q.marks_awarded ?? 0;
+      const mx = q.marks_available ?? 0;
+      chipEl.innerHTML = q.amended
+        ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+        : markChip(ma, mx);
+    });
+
+    // Hide save bar and clear pending
+    const bar = document.getElementById(`amendbar-${cardId}`);
+    if (bar) bar.style.display = 'none';
+    delete pendingAmendments[cardId];
+    toast('Marks saved successfully', 'ok');
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'err');
+  }
+}
+
+function cancelAmendments(cardId) {
+  // Reload the page section — simplest rollback
+  delete pendingAmendments[cardId];
+  const bar = document.getElementById(`amendbar-${cardId}`);
+  if (bar) bar.style.display = 'none';
+  // Restore any open inputs back to chips by reloading history or re-rendering
+  toast('Amendments cancelled', 'info');
+  loadHistory();
 }
 
 function escHtml(str) {
@@ -979,13 +1095,22 @@ async function loadHistory() {
           const rowId    = 'sr-' + (s.id || Math.random().toString(36).slice(2));
 
           // Per-question breakdown table
+          const hCardId = 'hcard-' + (s.id || rowId);
+          const hSubId  = s.id || '';
           const qTableRows = qs.map((q, i) => {
             const ma = q.marks_awarded  ?? 0;
             const mx = q.marks_available ?? 0;
-            return `<tr>
-              <td style="font-weight:600;color:var(--accent);white-space:nowrap;">Q${q.question_number ?? i+1}</td>
-              <td style="max-width:220px;line-height:1.4;font-size:12px;">${escHtml(q.question_text||'—')}</td>
-              <td style="white-space:nowrap;">${markChip(ma, mx)}</td>
+            const qn = q.question_number ?? i+1;
+            const chip = q.amended
+              ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+              : markChip(ma, mx);
+            return `<tr id="qrow-${hCardId}-${i}">
+              <td style="font-weight:600;color:var(--accent);white-space:nowrap;">Q${qn}</td>
+              <td style="max-width:200px;line-height:1.4;font-size:12px;">${escHtml(q.question_text||'—')}</td>
+              <td style="white-space:nowrap;">
+                <span id="chip-${hCardId}-${i}">${chip}</span>
+                ${hSubId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${hCardId}',${i},'${qn}',${ma},${mx},'${hSubId}')">✏️</button>` : ''}
+              </td>
               <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback||'')}</td>
             </tr>`;
           }).join('');
@@ -994,19 +1119,25 @@ async function loadHistory() {
             <div class="assess-feedback-panel">
               ${qs.length ? `
                 <div class="fb-label" style="color:var(--text2);margin-bottom:6px;">📊 Question Breakdown</div>
-                <div style="overflow-x:auto;margin-bottom:14px;">
+                <div style="overflow-x:auto;margin-bottom:8px;">
                   <table class="q-table" style="font-size:12px;">
                     <thead><tr>
                       <th style="width:36px;">#</th>
                       <th>Question</th>
-                      <th style="width:64px;">Marks</th>
+                      <th style="width:80px;">Marks</th>
                       <th>Feedback</th>
                     </tr></thead>
                     <tbody>${qTableRows}</tbody>
                   </table>
+                </div>
+                <div id="amendbar-${hCardId}" style="display:none;" class="amend-bar">
+                  <div class="unsaved-dot"></div>
+                  <span>You have unsaved amendments</span>
+                  <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${hCardId}','${hSubId}')">💾 Save Changes</button>
+                  <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${hCardId}')">Cancel</button>
                 </div>` : ''}
               ${s.overall_feedback ? `
-                <div class="fb-label" style="color:var(--accent);">📋 Student Feedback</div>
+                <div class="fb-label" style="color:var(--accent);margin-top:10px;">📋 Student Feedback</div>
                 <div class="fb-text" style="margin-bottom:${s.teacher_notes?'12px':'0'};">${escHtml(s.overall_feedback)}</div>
               ` : ''}
               ${s.teacher_notes ? `
