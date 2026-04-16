@@ -28,7 +28,7 @@ OLLAMA_BASE    = os.getenv("OLLAMA_BASE",    "http://localhost:11434")
 GEMMA_MODEL    = os.getenv("GEMMA_MODEL",    "gemma:2b")
 DB_PATH        = os.getenv("DB_PATH",        "grademate.db")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_MODEL   = os.getenv("GOOGLE_MODEL",   "gemma-3-27b-it")
+GOOGLE_MODEL   = os.getenv("GOOGLE_MODEL",   "gemma-4-27b-it")
 GOOGLE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 USE_GOOGLE     = bool(GOOGLE_API_KEY)
 
@@ -420,7 +420,7 @@ async def lifespan(app: FastAPI):
     init_db()
     provider = f"Google AI Studio ({GOOGLE_MODEL})" if USE_GOOGLE else f"Ollama ({GEMMA_MODEL})"
     print(f"\n{'='*55}")
-    print(f"  GradeMate v3 — Cambridge IGCSE 0580")
+    print(f"  AssesslyAI — Cambridge IGCSE 0580")
     print(f"  Provider : {provider}")
     print(f"  API      : http://localhost:8000")
     print(f"{'='*55}\n")
