@@ -1,5 +1,5 @@
 """
-GradeMate v3 — Cambridge IGCSE Mathematics 0580
+SankofahScriptAI — Cambridge IGCSE Mathematics 0580
 Upload a student's answer paper (photo or PDF).
 Gemma reads the printed questions AND the student's handwritten answers,
 separates them, and marks each question using Cambridge conventions.
@@ -420,13 +420,13 @@ async def lifespan(app: FastAPI):
     init_db()
     provider = f"Google AI Studio ({GOOGLE_MODEL})" if USE_GOOGLE else f"Ollama ({GEMMA_MODEL})"
     print(f"\n{'='*55}")
-    print(f"  AssesslyAI — Cambridge IGCSE 0580")
+    print(f"  SankofahScriptAI — Cambridge IGCSE 0580")
     print(f"  Provider : {provider}")
     print(f"  API      : http://localhost:8000")
     print(f"{'='*55}\n")
     yield
 
-app = FastAPI(title="GradeMate v3", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="SankofahScriptAI", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -656,7 +656,7 @@ async def export_csv(class_name: str):
     for r in rows:
         w.writerow(list(r))
     out.seek(0)
-    fname = f"grademate_{class_name}_{datetime.now().strftime('%Y%m%d')}.csv"
+    fname = f"SankofahScriptAI_{class_name}_{datetime.now().strftime('%Y%m%d')}.csv"
     return StreamingResponse(
         iter([out.getvalue()]),
         media_type="text/csv",
@@ -705,7 +705,7 @@ async def export_exercise_csv(
 
     safe_type = assessment_type.replace(" ", "_")
     cls_part  = f"_{class_name.replace(' ', '_')}" if class_name else ""
-    fname     = f"AssesslyAI_{safe_type}_{exercise_number}{cls_part}_{datetime.now().strftime('%Y%m%d')}.csv"
+    fname     = f"SankofahScriptAI_{safe_type}_{exercise_number}{cls_part}_{datetime.now().strftime('%Y%m%d')}.csv"
     return StreamingResponse(
         iter([out.getvalue()]),
         media_type="text/csv",
