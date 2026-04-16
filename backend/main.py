@@ -28,7 +28,7 @@ OLLAMA_BASE    = os.getenv("OLLAMA_BASE",    "http://localhost:11434")
 GEMMA_MODEL    = os.getenv("GEMMA_MODEL",    "gemma:2b")
 DB_PATH        = os.getenv("DB_PATH",        "grademate.db")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-GOOGLE_MODEL   = os.getenv("GOOGLE_MODEL",   "gemma-4-27b-it")
+GOOGLE_MODEL   = os.getenv("GOOGLE_MODEL",   "gemma-4-31b-it")
 GOOGLE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 USE_GOOGLE     = bool(GOOGLE_API_KEY)
 
@@ -129,20 +129,36 @@ async def call_google(prompt: str, file_b64: str, mime_type: str) -> str:
         {"inline_data": {"mime_type": mime_type, "data": file_b64}}
     ]
     payload = {
+        "system_instruction": {
+            "parts": [{"text": "You are a Cambridge IGCSE Mathematics examiner. You ONLY output valid JSON. Never output explanations, descriptions, or any text outside the JSON object. Your entire response must start with { and end with }."}]
+        },
         "contents": [{"parts": parts}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192, "topP": 0.9}
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 8192,
+            "topP": 0.9,
+            "responseMimeType": "application/json"
+        }
     }
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
+    print(f"[AI] Calling model: {GOOGLE_MODEL}")
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.post(url, json=payload)
         if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"Google AI error: {resp.text[:400]}")
+            error_detail = resp.text[:600]
+            print(f"[AI] ERROR {resp.status_code}: {error_detail}")
+            raise HTTPException(resp.status_code, f"Google AI error ({resp.status_code}): {error_detail}")
         data = resp.json()
+        # Check for content filtering or empty response
         candidates = data.get("candidates", [])
-        if candidates:
-            out_parts = candidates[0].get("content", {}).get("parts", [])
-            return "".join(p.get("text", "") for p in out_parts)
-    return ""
+        if not candidates:
+            print(f"[AI] No candidates returned. Full response: {json.dumps(data)[:400]}")
+            raise HTTPException(500, "AI returned no candidates — check model name or API key")
+        out_parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in out_parts)
+        if not text:
+            print(f"[AI] Empty text in response. Candidate: {json.dumps(candidates[0])[:400]}")
+        return text
 
 async def call_ollama(prompt: str, file_b64: str) -> str:
     payload = {
@@ -170,7 +186,9 @@ def paper_prompt(paper_type_hint: str = "Auto-detect") -> str:
         if paper_type_hint != "Auto-detect"
         else "This is a Cambridge IGCSE Mathematics 0580 paper (Core or Extended — detect from the paper)."
     )
-    return f"""You are an experienced Cambridge IGCSE Mathematics 0580 examiner marking a student's completed answer paper.
+    return f"""IMPORTANT: You must respond with ONLY a valid JSON object. No explanations, no descriptions, no markdown — just the raw JSON starting with {{ and ending with }}.
+
+You are an experienced Cambridge IGCSE Mathematics 0580 examiner marking a student's completed answer paper.
 
 {hint}
 
@@ -244,7 +262,9 @@ def chunk_prompt(page_start: int, page_end: int, total_pages: int,
             f"This is a continuation — extract only the questions that appear on these pages."
         )
 
-    return f"""You are an experienced Cambridge IGCSE Mathematics 0580 examiner.
+    return f"""IMPORTANT: Respond with ONLY a valid JSON object. No text before or after — just raw JSON starting with {{ and ending with }}.
+
+You are an experienced Cambridge IGCSE Mathematics 0580 examiner.
 
 {context}
 
