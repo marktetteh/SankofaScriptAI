@@ -126,17 +126,20 @@ def save_submission(conn, student_name, class_name, result,
 QUESTION_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "question_number": {"type": "STRING"},
-        "question_text":   {"type": "STRING"},
-        "student_answer":  {"type": "STRING"},
-        "marks_available": {"type": "NUMBER"},
-        "marks_awarded":   {"type": "NUMBER"},
-        "mark_breakdown":  {"type": "STRING"},
-        "correct":         {"type": "BOOLEAN"},
-        "feedback":        {"type": "STRING"},
+        "question_number":  {"type": "STRING"},
+        "question_text":    {"type": "STRING"},
+        "student_answer":   {"type": "STRING"},
+        "marks_available":  {"type": "NUMBER"},
+        "marks_awarded":    {"type": "NUMBER"},
+        "mark_breakdown":   {"type": "STRING"},
+        "correct":          {"type": "BOOLEAN"},
+        "feedback":         {"type": "STRING"},
+        "correct_answer":   {"type": "STRING"},   # final correct answer
+        "worked_solution":  {"type": "STRING"},   # step-by-step working
     },
     "required": ["question_number","question_text","student_answer",
-                 "marks_available","marks_awarded","feedback"]
+                 "marks_available","marks_awarded","feedback",
+                 "correct_answer","worked_solution"]
 }
 
 MARKING_SCHEMA = {
@@ -303,7 +306,9 @@ FOR EACH QUESTION populate these fields:
 - marks_awarded: integer you are awarding
 - mark_breakdown: e.g. "M1 awarded – correct method; A0 – wrong final answer"
 - correct: true if fully correct, false otherwise
-- feedback: 1–2 sentences of specific helpful feedback
+- feedback: 1–2 sentences of specific helpful feedback addressed to the student
+- correct_answer: the final correct answer only (e.g. "x = 4.5" or "-180")
+- worked_solution: full step-by-step Cambridge working showing exactly how to reach the correct answer (show all method steps, e.g. "Step 1: 5 × -3 = -15. Step 2: -3 × -4 = 12. Step 3: -15 × 12 = -180.")
 
 FOR THE OVERALL RESULT populate:
 - paper_type: "Core" or "Extended"

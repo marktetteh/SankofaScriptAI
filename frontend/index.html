@@ -169,6 +169,19 @@ tr:hover .edit-mark-btn{opacity:1;}
 .progress-bar{height:8px;border-radius:4px;background:var(--surface2);overflow:hidden;margin-top:4px;}
 .progress-fill{height:100%;border-radius:4px;transition:width 0.3s;}
 
+/* ── Solution panel ── */
+.sol-toggle{background:none;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:3px 9px;font-size:11px;font-weight:600;color:var(--green);cursor:pointer;transition:all 0.15s;white-space:nowrap;}
+.sol-toggle:hover{background:rgba(52,211,153,0.1);border-color:var(--green);}
+.sol-toggle.open{background:rgba(52,211,153,0.12);border-color:var(--green);}
+.sol-row{display:none;}
+.sol-row.open{display:table-row;}
+.sol-panel{background:rgba(52,211,153,0.05);border-top:1px dashed rgba(52,211,153,0.2);padding:14px 16px 16px;}
+.sol-answer{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;}
+.sol-answer-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);white-space:nowrap;}
+.sol-answer-value{font-size:14px;font-weight:700;color:var(--text);background:rgba(52,211,153,0.12);border-radius:6px;padding:3px 10px;border:1px solid rgba(52,211,153,0.25);}
+.sol-steps-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);margin-bottom:6px;}
+.sol-steps{font-size:13px;line-height:1.8;color:var(--text);background:rgba(255,255,255,0.03);border-radius:8px;padding:12px 14px;border:1px solid var(--border);white-space:pre-wrap;font-family:inherit;}
+
 /* ── Assessment groups (History) ── */
 .assess-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;}
 .assess-group-header{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer;transition:background 0.15s;user-select:none;}
@@ -549,6 +562,23 @@ function renderResult(data, containerId) {
     const chip    = q.amended
       ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
       : markChip(ma, mx);
+    const hasSol  = q.correct_answer || q.worked_solution;
+    const solId   = `sol-${cardId}-${i}`;
+    const solRow  = hasSol ? `
+    <tr class="sol-row" id="${solId}">
+      <td colspan="5" style="padding:0;">
+        <div class="sol-panel">
+          ${q.correct_answer ? `
+          <div class="sol-answer">
+            <span class="sol-answer-label">✓ Answer</span>
+            <span class="sol-answer-value">${escHtml(q.correct_answer)}</span>
+          </div>` : ''}
+          ${q.worked_solution ? `
+          <div class="sol-steps-label">📐 Worked Solution</div>
+          <div class="sol-steps">${escHtml(q.worked_solution)}</div>` : ''}
+        </div>
+      </td>
+    </tr>` : '';
     return `<tr id="qrow-${cardId}-${i}">
       <td style="font-weight:600;color:var(--accent);">Q${qn}</td>
       <td style="max-width:220px;line-height:1.5;">${escHtml(q.question_text || '—')}</td>
@@ -557,8 +587,11 @@ function renderResult(data, containerId) {
         <span id="chip-${cardId}-${i}">${chip}</span>
         ${subId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${cardId}',${i},'${qn}',${ma},${mx},'${subId}')">✏️</button>` : ''}
       </td>
-      <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback || '')}</td>
-    </tr>`;
+      <td style="font-size:12px;color:var(--text2);line-height:1.4;">
+        ${escHtml(q.feedback || '')}
+        ${hasSol ? `<br><button class="sol-toggle" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Show Solution</button>` : ''}
+      </td>
+    </tr>${solRow}`;
   }).join('');
 
   el.innerHTML = `
@@ -587,7 +620,7 @@ function renderResult(data, containerId) {
             <th>Question</th>
             <th>Student's Answer</th>
             <th style="width:90px;">Marks</th>
-            <th>Feedback</th>
+            <th>Feedback &amp; Solution</th>
           </tr></thead>
           <tbody>${qRows}</tbody>
         </table>
@@ -713,6 +746,19 @@ function cancelAmendments(cardId) {
 
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Solution toggle ───────────────────────────────────────────────────────
+
+function toggleSolution(solRowId, btnId) {
+  const row = document.getElementById(solRowId);
+  const btn = document.getElementById(btnId);
+  if (!row) return;
+  const isOpen = row.classList.toggle('open');
+  if (btn) {
+    btn.classList.toggle('open', isOpen);
+    btn.textContent = isOpen ? '📖 Hide Solution' : '📖 Show Solution';
+  }
 }
 
 // ── Mark Paper (single) ───────────────────────────────────────────────────
