@@ -256,6 +256,30 @@ async def call_ai(prompt: str, file_b64: str, mime_type: str = "image/jpeg", sch
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
+# Used as Step 1 of the two-step chain.  Replaces the long paper_prompt for the
+# free-form analysis pass so the model produces a compact ~1–2 KB notes block
+# instead of 10 KB of flowing prose.  Cutting Step 1 output from ~2500 tokens
+# to ~300 tokens reduces Step 1 latency from ~25 s to ~3–5 s.
+COMPACT_ANALYSIS_PROMPT = """Cambridge IGCSE 0580 Mathematics examiner. Mark the student's answer paper shown.
+
+STEP 1 — SCAN: Read the paper top to bottom. List every question number you see (e.g. 1(a), 1(b)(i), 1(c), 2(a)…).
+
+STEP 2 — MARK EACH: For every question you listed, write this compact block — no prose, no intro:
+
+--- Q<num> [<marks>M] ---
+Student: <exact student answer, or "No attempt">
+Award: <n>/<marks>
+Answer: <correct final answer, e.g. "x=3" or "-180">
+Solution: <concise step-by-step, e.g. "Step 1: 5×(-3)=-15. Step 2: (-3)×(-4)=12. Step 3: (-15)×12=-180.">
+Feedback: <one sentence for the student>
+
+After all questions, write:
+Paper: <Core/Extended> | Code: <0580/XX if visible, else blank>
+Overall: <2 sentences of encouragement for the student>
+Teacher: <1 sentence about patterns you noticed>
+
+Keep every block SHORT. One line per field."""
+
 def paper_prompt(paper_type_hint: str = "Auto-detect") -> str:
     hint = (
         f"This is a Cambridge IGCSE Mathematics 0580 {paper_type_hint} paper."
@@ -377,12 +401,13 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) ->
     Step 1: Free-form analysis (no schema) → model reads ALL questions.
     Step 2: Text-only JSON conversion (with CHUNK_SCHEMA) → structured output.
     """
-    pdf_parts  = [{"text": prompt}, {"inline_data": {"mime_type": "application/pdf", "data": chunk_b64}}]
-    gen_free   = {"temperature": 0.1, "maxOutputTokens": 65536, "topP": 0.9}
+    # Use compact prompt for Step 1 to minimise output length → faster
+    compact_parts = [{"text": COMPACT_ANALYSIS_PROMPT}, {"inline_data": {"mime_type": "application/pdf", "data": chunk_b64}}]
+    gen_free      = {"temperature": 0.1, "maxOutputTokens": 8192, "topP": 0.9}
 
     # ── Step 1 ───────────────────────────────────────────────────────────────
-    print(f"[PDF] {chunk_label} Step 1: free analysis…")
-    analysis = await _google_request(pdf_parts, gen_free)
+    print(f"[PDF] {chunk_label} Step 1: compact analysis…")
+    analysis = await _google_request(compact_parts, gen_free)
     print(f"[PDF] {chunk_label} analysis_len={len(analysis)}")
 
     # If step 1 already returned complete JSON with ≥2 questions, use it directly
@@ -622,16 +647,23 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
         {"inline_data": {"mime_type": mime, "data": file_b64}}
     ]
 
-    # ── Step 1: free-form analysis (no JSON, no schema) ──────────────────────
+    # ── Step 1: compact analysis (no JSON, no schema) ────────────────────────
+    # Use the compact prompt instead of the full paper_prompt so Step 1 produces
+    # ~300-500 chars per question rather than ~2500 chars of prose.
+    # This cuts Step 1 output from ~10,000 chars (~25 s) to ~1,500 chars (~3-5 s).
+    compact_parts = [
+        {"text": COMPACT_ANALYSIS_PROMPT},
+        {"inline_data": {"mime_type": mime, "data": file_b64}}
+    ]
     gen_free = {
         "temperature": 0.1,
-        "maxOutputTokens": 65536,
+        "maxOutputTokens": 8192,   # compact output doesn't need 65536 tokens
         "topP": 0.9,
     }
-    print(f"[MARK] Step 1: free-form image analysis…")
+    print(f"[MARK] Step 1: compact analysis…")
     analysis = ""
     try:
-        analysis = await _google_request(image_parts, gen_free)
+        analysis = await _google_request(compact_parts, gen_free)
         print(f"[MARK] Step 1: analysis_len={len(analysis)}")
 
         # If step 1 already returned valid JSON with enough questions, use it
