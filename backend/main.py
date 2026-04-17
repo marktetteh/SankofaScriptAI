@@ -361,12 +361,59 @@ FOR EACH QUESTION populate:
 - mark_breakdown: e.g. "M1 awarded – correct method; A0 – wrong answer"
 - correct: true if fully correct, false otherwise
 - feedback: 1–2 sentences of specific helpful feedback
+- correct_answer: the final correct answer only (e.g. "x = 4.5" or "-180")
+- worked_solution: full step-by-step Cambridge working (e.g. "Step 1: … Step 2: …")
 
 Also populate:
 - paper_type: "Core" or "Extended"
 - paper_code: paper code from cover page (e.g. "0580/33") if visible, else empty string
 - total_marks_available: total marks for the WHOLE paper from cover page if visible (0 if not on these pages)
 - chunk_feedback: one sentence observation about student performance on these pages"""
+
+
+async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) -> dict:
+    """Two-step marking for a single PDF chunk — same approach as image marking.
+
+    Step 1: Free-form analysis (no schema) → model reads ALL questions.
+    Step 2: Text-only JSON conversion (with CHUNK_SCHEMA) → structured output.
+    """
+    pdf_parts  = [{"text": prompt}, {"inline_data": {"mime_type": "application/pdf", "data": chunk_b64}}]
+    gen_free   = {"temperature": 0.1, "maxOutputTokens": 65536, "topP": 0.9}
+
+    # ── Step 1 ───────────────────────────────────────────────────────────────
+    print(f"[PDF] {chunk_label} Step 1: free analysis…")
+    analysis = await _google_request(pdf_parts, gen_free)
+    print(f"[PDF] {chunk_label} analysis_len={len(analysis)}")
+
+    # If step 1 already returned complete JSON with ≥2 questions, use it directly
+    if analysis.strip().startswith("{") and '"questions"' in analysis:
+        parsed = parse_json(analysis)
+        if len(parsed.get("questions", [])) >= 2:
+            print(f"[PDF] {chunk_label} Step 1 returned complete JSON — skipping Step 2")
+            return parsed
+
+    # ── Step 2 ───────────────────────────────────────────────────────────────
+    print(f"[PDF] {chunk_label} Step 2: JSON conversion…")
+    conversion_prompt = (
+        "You just analysed pages of a Cambridge IGCSE Mathematics 0580 answer paper and produced "
+        "the following detailed marking analysis. Now convert your ENTIRE analysis into the "
+        "required JSON format. Include EVERY question you identified — do not skip any.\n\n"
+        f"YOUR ANALYSIS:\n{analysis[:10000]}\n\n"
+        "Convert all questions above to JSON. The 'questions' array must have one entry "
+        "for every question and sub-question you identified.\n"
+        "Also populate: paper_type, paper_code, total_marks_available, chunk_feedback."
+    )
+    gen_schema = {
+        "temperature": 0.1, "maxOutputTokens": 65536, "topP": 0.9,
+        "responseMimeType": "application/json",
+        "responseSchema": CHUNK_SCHEMA,
+    }
+    print(f"[AI] gemma-4-31b-it | CHUNK schema (Step 2 text-only)")
+    json_text = await _google_request([{"text": conversion_prompt}], gen_schema)
+    parsed    = parse_json(json_text)
+    q_nums    = [q.get("question_number", "?") for q in parsed.get("questions", [])]
+    print(f"[PDF] {chunk_label} questions={len(q_nums)} — {q_nums}")
+    return parsed
 
 
 async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
@@ -400,15 +447,13 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
         writer.write(buf)
         chunk_b64 = base64.b64encode(buf.getvalue()).decode()
 
-        prompt = chunk_prompt(start + 1, end, total_pages, paper_type, is_first)
+        prompt      = chunk_prompt(start + 1, end, total_pages, paper_type, is_first)
+        chunk_label = f"Chunk {start+1}-{end}"
         print(f"[PDF] Marking pages {start+1}–{end}…")
 
         try:
-            raw    = await call_ai(prompt, chunk_b64, "application/pdf", schema=CHUNK_SCHEMA)
-            result = parse_json(raw)
+            result   = await _mark_chunk_two_step(prompt, chunk_b64, chunk_label)
             chunk_qs = result.get("questions", [])
-            q_nums   = [q.get("question_number", "?") for q in chunk_qs]
-            print(f"[PDF] Chunk {start+1}-{end}: response_len={len(raw)}  questions={len(chunk_qs)} — {q_nums}")
             # Clamp marks per question
             for q in chunk_qs:
                 avail   = max(0, int(q.get("marks_available", 0)))
@@ -416,7 +461,7 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
                 q["marks_available"] = avail
                 q["marks_awarded"]   = min(awarded, avail)
         except Exception as ex:
-            print(f"[PDF] Chunk {start+1}-{end} error: {ex}")
+            print(f"[PDF] {chunk_label} error: {ex}")
             result = {}
 
         # Grab paper metadata from first chunk
