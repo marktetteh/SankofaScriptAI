@@ -418,15 +418,19 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) ->
             return parsed
 
     # ── Step 2 ───────────────────────────────────────────────────────────────
-    print(f"[PDF] {chunk_label} Step 2: JSON conversion…")
+    import re as _re
+    step1_q_nums = _re.findall(r'---\s*Q([\d()\w]+)', analysis)
+    expected_count = len(step1_q_nums) if step1_q_nums else "all"
+    print(f"[PDF] {chunk_label} Step 2: JSON conversion ({expected_count} questions)…")
     conversion_prompt = (
         "You just analysed pages of a Cambridge IGCSE Mathematics 0580 answer paper and produced "
-        "the following detailed marking analysis. Now convert your ENTIRE analysis into the "
-        "required JSON format. Include EVERY question you identified — do not skip any.\n\n"
-        f"YOUR ANALYSIS:\n{analysis[:10000]}\n\n"
-        "Convert all questions above to JSON. The 'questions' array must have one entry "
-        "for every question and sub-question you identified.\n"
-        "Also populate: paper_type, paper_code, total_marks_available, chunk_feedback."
+        "the following marking notes. Convert your ENTIRE analysis into the required JSON format.\n\n"
+        f"CRITICAL: Your analysis contains {expected_count} questions: {step1_q_nums}. "
+        "You MUST include every single one in the 'questions' array — do not skip or drop any. "
+        f"The final 'questions' array MUST have exactly {expected_count} entries.\n\n"
+        f"YOUR ANALYSIS:\n{analysis}\n\n"
+        "Convert ALL questions above to JSON. Also populate: paper_type, paper_code, "
+        "total_marks_available, chunk_feedback."
     )
     gen_schema = {
         "temperature": 0.1, "maxOutputTokens": 65536, "topP": 0.9,
@@ -678,14 +682,19 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
 
     # ── Step 2: text-only JSON conversion using step 1's analysis ────────────
     if analysis:
+        # Count how many question blocks Step 1 found so we can check completeness
+        import re as _re
+        step1_q_nums = _re.findall(r'---\s*Q([\d()\w]+)', analysis)
+        expected_count = len(step1_q_nums) if step1_q_nums else "all"
         conversion_prompt = (
             "You just analysed a Cambridge IGCSE Mathematics 0580 answer paper and produced "
-            "the following detailed marking analysis. Now convert your ENTIRE analysis into "
-            "the required JSON format. You MUST include every question you identified — "
-            "do not skip or merge any questions.\n\n"
-            f"YOUR ANALYSIS:\n{analysis[:10000]}\n\n"
-            "Convert all questions above to JSON. The 'questions' array must have one entry "
-            "for every question and sub-question you identified in your analysis."
+            "the following marking notes. Convert your ENTIRE analysis into the required JSON format.\n\n"
+            f"CRITICAL: Your analysis contains {expected_count} questions: {step1_q_nums}. "
+            "You MUST include every single one of them in the 'questions' array — "
+            "do not skip, merge, or drop any question. "
+            f"The final 'questions' array MUST have exactly {expected_count} entries.\n\n"
+            f"YOUR ANALYSIS:\n{analysis}\n\n"
+            "Convert ALL questions above to JSON now."
         )
         gen_schema = {
             "temperature": 0.1,
