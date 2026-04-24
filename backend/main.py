@@ -419,14 +419,14 @@ Also populate:
 - chunk_feedback: one sentence observation about student performance on these pages"""
 
 
-async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) -> dict:
+async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str, mime: str = "application/pdf") -> dict:
     """Two-step marking for a single PDF chunk — same approach as image marking.
 
     Step 1: Free-form analysis (no schema) → model reads ALL questions.
     Step 2: Text-only JSON conversion (with CHUNK_SCHEMA) → structured output.
     """
     # Use compact prompt for Step 1 to minimise output length → faster
-    compact_parts = [{"text": COMPACT_ANALYSIS_PROMPT}, {"inline_data": {"mime_type": "application/pdf", "data": chunk_b64}}]
+    compact_parts = [{"text": COMPACT_ANALYSIS_PROMPT}, {"inline_data": {"mime_type": mime, "data": chunk_b64}}]
     gen_free      = {"temperature": 0.1, "maxOutputTokens": 8192, "topP": 0.9}
 
     # ── Step 1 ───────────────────────────────────────────────────────────────
@@ -469,52 +469,115 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) ->
     return parsed
 
 
+def pdf_to_jpeg_pages(pdf_bytes: bytes) -> list:
+    """Convert each PDF page to a JPEG image using pymupdf.
+    Returns list of (jpeg_bytes, page_number) tuples.
+    Falls back to raw PDF chunks if pymupdf is unavailable."""
+    try:
+        import fitz  # pymupdf
+        doc    = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages  = []
+        for i, page in enumerate(doc):
+            mat = fitz.Matrix(2.0, 2.0)          # 2× zoom — clear enough for handwriting
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            pages.append((pix.tobytes("jpeg"), i + 1))
+        doc.close()
+        print(f"[PDF] Converted {len(pages)} pages to JPEG via pymupdf")
+        return pages
+    except ImportError:
+        print("[PDF] pymupdf not available — falling back to PDF chunks")
+        return []
+
+
 async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
-    """Split a multi-page PDF into 4-page chunks, mark each, then combine."""
+    """Convert PDF pages to JPEG images (one page at a time) then mark each.
+    JPEG images are smaller and more reliable than raw PDF chunks with the AI."""
+
+    # ── Try PDF→JPEG conversion first (most reliable) ─────────────────────────
+    jpeg_pages = pdf_to_jpeg_pages(pdf_bytes)
+
+    if jpeg_pages:
+        total_pages   = len(jpeg_pages)
+        all_questions = []
+        paper_type    = paper_type_hint
+        feedback_parts = []
+        teacher_parts  = []
+
+        print(f"[PDF] Marking {total_pages} pages as JPEG images…")
+        for jpeg_bytes, page_num in jpeg_pages:
+            is_first   = (page_num == 1)
+            img_b64    = base64.b64encode(jpeg_bytes).decode()
+            prompt     = chunk_prompt(page_num, page_num, total_pages, paper_type, is_first)
+            chunk_label = f"Page {page_num}"
+            print(f"[PDF] Marking {chunk_label} ({len(jpeg_bytes)//1024}KB JPEG)…")
+
+            try:
+                result   = await _mark_chunk_two_step(prompt, img_b64, chunk_label, mime="image/jpeg")
+                chunk_qs = result.get("questions", [])
+                for q in chunk_qs:
+                    avail   = max(0, int(q.get("marks_available", 0)))
+                    awarded = max(0, int(q.get("marks_awarded",  0)))
+                    q["marks_available"] = avail
+                    q["marks_awarded"]   = min(awarded, avail)
+            except Exception as ex:
+                print(f"[PDF] {chunk_label} error: {ex} — skipping page")
+                continue   # skip failed page, don't abort the whole paper
+
+            if is_first:
+                paper_type = result.get("paper_type", paper_type_hint)
+            all_questions.extend(result.get("questions", []))
+            if result.get("chunk_feedback"):
+                feedback_parts.append(result["chunk_feedback"])
+            if result.get("teacher_notes"):
+                teacher_parts.append(result["teacher_notes"])
+
+        awarded   = sum(q.get("marks_awarded",  0) for q in all_questions)
+        available = sum(q.get("marks_available", 0) for q in all_questions)
+        return finalise({
+            "paper_type": paper_type,
+            "total_marks_available": available,
+            "total_marks_awarded":   awarded,
+            "questions":             all_questions,
+            "overall_feedback":      " ".join(feedback_parts),
+            "teacher_notes":         " ".join(teacher_parts),
+        })
+
+    # ── Fallback: raw PDF chunks (if pymupdf not installed) ───────────────────
     if not PYPDF_OK:
-        # No pypdf — send the whole PDF in one shot
         b64 = base64.b64encode(pdf_bytes).decode()
         raw = await call_ai(paper_prompt(paper_type_hint), b64, "application/pdf")
         return finalise(parse_json(raw))
 
-    reader     = PdfReader(io.BytesIO(pdf_bytes))
+    reader      = PdfReader(io.BytesIO(pdf_bytes))
     total_pages = len(reader.pages)
-    CHUNK      = 1   # 1 page per chunk — smallest payload, avoids Google 500 INTERNAL errors
-    print(f"[PDF] {total_pages} pages → {((total_pages-1)//CHUNK)+1} chunks of {CHUNK} pages")
+    print(f"[PDF] Fallback: {total_pages} pages as PDF chunks…")
 
-    all_questions    = []
-    paper_type       = paper_type_hint
-    total_marks_avail = 0
-    feedback_parts   = []
-    teacher_parts    = []
+    all_questions = []
+    paper_type    = paper_type_hint
+    feedback_parts = []
+    teacher_parts  = []
 
-    for start in range(0, total_pages, CHUNK):
-        end      = min(start + CHUNK, total_pages)
+    for start in range(0, total_pages, 1):
+        end      = start + 1
         is_first = (start == 0)
-
-        # Build chunk PDF
-        writer = PdfWriter()
-        for i in range(start, end):
-            writer.add_page(reader.pages[i])
+        writer   = PdfWriter()
+        writer.add_page(reader.pages[start])
         buf = io.BytesIO()
         writer.write(buf)
-        chunk_b64 = base64.b64encode(buf.getvalue()).decode()
-
+        chunk_b64   = base64.b64encode(buf.getvalue()).decode()
         prompt      = chunk_prompt(start + 1, end, total_pages, paper_type, is_first)
-        chunk_label = f"Chunk {start+1}-{end}"
-        print(f"[PDF] Marking pages {start+1}–{end}…")
+        chunk_label = f"Chunk {start+1}"
+        print(f"[PDF] Marking page {start+1}…")
 
         try:
             result   = await _mark_chunk_two_step(prompt, chunk_b64, chunk_label)
             chunk_qs = result.get("questions", [])
-            # Clamp marks per question
             for q in chunk_qs:
                 avail   = max(0, int(q.get("marks_available", 0)))
                 awarded = max(0, int(q.get("marks_awarded",  0)))
                 q["marks_available"] = avail
                 q["marks_awarded"]   = min(awarded, avail)
         except HTTPException as ex:
-            # Surface AI/network errors directly to the caller instead of silently returning 0 marks
             raise HTTPException(ex.status_code, f"AI error on {chunk_label}: {ex.detail}")
         except Exception as ex:
             print(f"[PDF] {chunk_label} error: {ex}")

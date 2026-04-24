@@ -500,6 +500,21 @@ tr:hover .edit-mark-btn{opacity:1;}
 
 <script>
 const API = '/api';
+
+// Fetch with a 5-minute timeout — prevents "Failed to fetch" on slow PDF processing
+async function fetchWithTimeout(url, options = {}, ms = 300000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    return resp;
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out after 5 minutes — the paper may be too large. Try a smaller file.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 let batchRowCount = 0;
 
 // ── Utilities ──────────────────────────────────────────────────────────────
@@ -907,7 +922,7 @@ async function markSinglePaper() {
     fd.append('exercise_number', exNum);
     fd.append('file', file);
 
-    const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
+    const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `Server error ${resp.status}`);
@@ -1052,7 +1067,7 @@ async function markBatch() {
       fd.append('exercise_number', exNum);
       fd.append('file', file);
 
-      const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
+      const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.detail || `Server error ${resp.status}`);
@@ -1161,7 +1176,7 @@ async function retryOne(failedIndex) {
     fd.append('assessment_type', assessType);
     fd.append('exercise_number', exNum);
     fd.append('file', entry.file);
-    const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
+    const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `Server error ${resp.status}`);
