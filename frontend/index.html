@@ -1025,13 +1025,19 @@ async function markBatch() {
 
   loading(`Marking ${entries.length} papers for ${cls}…<br>Gemma reads each paper individually.<br>Please wait — this may take a few minutes.`);
 
-  try {
-    // Process one at a time (avoids huge payload) and collect results
-    const results = [];
-    for (let i = 0; i < entries.length; i++) {
-      const { name, file } = entries[i];
-      document.getElementById('loadingMsg').innerHTML =
-        `Marking paper ${i+1} of ${entries.length}: ${escHtml(name)}<br>Please wait…`;
+  const results  = [];
+  const failed   = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const { name, file } = entries[i];
+    document.getElementById('loadingMsg').innerHTML =
+      `Marking paper ${i+1} of ${entries.length}<br>
+       <strong>${escHtml(name)}</strong><br>
+       <span style="font-size:12px;color:#6ee7b7;">
+         ✅ ${results.length} done &nbsp;·&nbsp; ❌ ${failed.length} failed so far
+       </span>`;
+
+    try {
       const fd = new FormData();
       fd.append('student_name', name);
       fd.append('class_name', cls);
@@ -1039,28 +1045,50 @@ async function markBatch() {
       fd.append('assessment_type', assessType);
       fd.append('exercise_number', exNum);
       fd.append('file', file);
-      const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
-      const data = await resp.json();
-      results.push(data);
-    }
 
-    doneLoading();
-    renderBatchResults(cls, results);
-    toast(`Marked ${results.length} papers for ${cls}!`, 'ok');
-  } catch(e) {
-    doneLoading();
-    toast('Error: ' + e.message, 'err');
+      const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error ${resp.status}`);
+      }
+      const data = await resp.json();
+      results.push({ ...data, _status: 'ok' });
+    } catch(e) {
+      console.error(`[BATCH] Failed for ${name}:`, e.message);
+      // Record the failure but DO NOT stop — continue to next student
+      failed.push({ student_name: name, file, error: e.message });
+    }
+  }
+
+  doneLoading();
+  renderBatchResults(cls, results, failed);
+
+  if (failed.length === 0) {
+    toast(`✅ All ${results.length} papers marked for ${cls}!`, 'ok');
+  } else if (results.length === 0) {
+    toast(`❌ All ${failed.length} papers failed — check connection and retry`, 'err');
+  } else {
+    toast(`✅ ${results.length} marked · ❌ ${failed.length} failed — see details below`, 'info');
   }
 }
 
-function renderBatchResults(cls, results) {
+// Store failed entries globally for retry
+let _failedEntries = [];
+
+function renderBatchResults(cls, results, failed = []) {
   const el = document.getElementById('bResult');
+  _failedEntries = failed;
 
   const avg = results.length
     ? Math.round(results.reduce((s,r) => s + (r.percentage||0), 0) / results.length * 10) / 10
     : 0;
 
-  const rows = results.map(r => {
+  const bannerColor = failed.length === 0 ? 'var(--green)' : results.length === 0 ? 'var(--red)' : 'var(--yellow)';
+  const bannerText  = failed.length === 0
+    ? `✅ All ${results.length} papers marked successfully`
+    : `✅ ${results.length} marked &nbsp;·&nbsp; ❌ ${failed.length} failed`;
+
+  const successRows = results.map(r => {
     const g = r.grade || 'U';
     return `<tr>
       <td style="font-weight:600;">${escHtml(r.student_name || '—')}</td>
@@ -1071,27 +1099,38 @@ function renderBatchResults(cls, results) {
     </tr>`;
   }).join('');
 
+  const failedRows = failed.map((f, fi) => `
+    <tr style="background:rgba(239,68,68,0.06);">
+      <td style="font-weight:600;color:var(--red);">❌ ${escHtml(f.student_name)}</td>
+      <td colspan="3" style="font-size:12px;color:var(--text2);">${escHtml(f.error)}</td>
+      <td><button class="btn btn-secondary btn-sm" onclick="retryOne(${fi})">↺ Retry</button></td>
+    </tr>`).join('');
+
   el.innerHTML = `
     <div class="card">
-      <div class="card-title">
-        Class Results — ${escHtml(cls)}
-        <span style="margin-left:auto;font-size:13px;color:var(--text2);">
-          Avg: <strong style="color:var(--accent);">${avg}%</strong>
-        </span>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+        <div class="card-title" style="margin:0;">Class Results — ${escHtml(cls)}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:13px;color:var(--text2);">Avg: <strong style="color:var(--accent);">${avg}%</strong></span>
+          <button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export/${encodeURIComponent(cls)}')">⬇ Export CSV</button>
+          ${failed.length > 0 ? `<button class="btn btn-primary btn-sm" onclick="retryAllFailed()">↺ Retry All Failed (${failed.length})</button>` : ''}
+        </div>
+      </div>
+      <div style="font-size:12px;font-weight:600;padding:8px 12px;border-radius:7px;margin-bottom:14px;
+                  background:rgba(0,0,0,0.2);border:1px solid ${bannerColor};color:${bannerColor};">
+        ${bannerText}
       </div>
       <div style="overflow-x:auto;">
         <table class="q-table">
           <thead><tr>
-            <th>Student</th><th>Marks</th><th>%</th><th>Grade</th><th>Notes</th>
+            <th>Student</th><th>Marks</th><th>%</th><th>Grade</th><th>Notes / Error</th>
           </tr></thead>
-          <tbody>${rows}</tbody>
+          <tbody>${successRows}${failedRows}</tbody>
         </table>
       </div>
-      <button class="btn btn-secondary btn-sm" style="margin-top:12px;"
-        onclick="window.open('${API}/export/${encodeURIComponent(cls)}')">⬇ Export CSV</button>
     </div>`;
 
-  // Individual result cards
+  // Individual result cards for successful ones
   results.forEach((r, i) => {
     const div = document.createElement('div');
     div.id = `batchCard-${i}`;
@@ -1100,6 +1139,51 @@ function renderBatchResults(cls, results) {
   });
 
   el.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function retryOne(failedIndex) {
+  const entry = _failedEntries[failedIndex];
+  if (!entry) return;
+  const cls        = document.getElementById('bClass')?.value || '';
+  const paper      = document.getElementById('bPaper')?.value || 'Auto-detect';
+  const assessType = document.getElementById('bAssessType')?.value || 'Class Exercise';
+  const exNum      = document.getElementById('bExNum')?.value || 1;
+
+  toast(`Retrying ${entry.student_name}…`, 'info');
+  try {
+    const fd = new FormData();
+    fd.append('student_name', entry.student_name);
+    fd.append('class_name', cls);
+    fd.append('paper_type', paper);
+    fd.append('assessment_type', assessType);
+    fd.append('exercise_number', exNum);
+    fd.append('file', entry.file);
+    const resp = await fetch(API + '/mark/paper', { method: 'POST', body: fd });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
+    }
+    const data = await resp.json();
+    _failedEntries.splice(failedIndex, 1);
+    toast(`✅ ${entry.student_name} marked successfully`, 'ok');
+    // Append new result card
+    const container = document.getElementById('bResult');
+    const div = document.createElement('div');
+    const rid = `batchCard-retry-${Date.now()}`;
+    div.id = rid;
+    container.appendChild(div);
+    renderResult(data, rid);
+  } catch(e) {
+    toast(`❌ Still failing for ${entry.student_name}: ${e.message}`, 'err');
+  }
+}
+
+async function retryAllFailed() {
+  if (_failedEntries.length === 0) return;
+  toast(`Retrying ${_failedEntries.length} failed papers…`, 'info');
+  for (let i = _failedEntries.length - 1; i >= 0; i--) {
+    await retryOne(i);
+  }
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
