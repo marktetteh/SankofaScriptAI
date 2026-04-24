@@ -173,16 +173,26 @@ CHUNK_SCHEMA = {
 }
 
 
-async def _google_request(parts: list, gen_config: dict) -> str:
-    """Internal: send one request to the Google AI API, return text content."""
+_SYSTEM_JSON = (
+    "You are an experienced Cambridge IGCSE Mathematics 0580 examiner. "
+    "Your response MUST be a single valid JSON object with no text before or after it. "
+    "Follow the provided response schema exactly. "
+    "Never include explanations, markdown, or prose outside the JSON structure."
+)
+_SYSTEM_FREE = (
+    "You are an experienced Cambridge IGCSE Mathematics 0580 examiner. "
+    "Analyse the student's answer paper carefully and produce your marking notes "
+    "in the exact plain-text format requested in the user message. "
+    "Do NOT output JSON — write each question block using the --- Q<num> --- format shown. "
+    "Follow the format in the prompt exactly."
+)
+
+async def _google_request(parts: list, gen_config: dict, free_form: bool = False) -> str:
+    """Internal: send one request to the Google AI API, return text content.
+    Use free_form=True for Step 1 analysis calls that expect plain text output."""
     payload = {
         "system_instruction": {
-            "parts": [{"text": (
-                "You are an experienced Cambridge IGCSE Mathematics 0580 examiner. "
-                "Your response MUST be a single valid JSON object with no text before or after it. "
-                "Follow the provided response schema exactly. "
-                "Never include explanations, markdown, or prose outside the JSON structure."
-            )}]
+            "parts": [{"text": _SYSTEM_FREE if free_form else _SYSTEM_JSON}]
         },
         "contents": [{"parts": parts}],
         "generationConfig": gen_config,
@@ -407,7 +417,7 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str) ->
 
     # ── Step 1 ───────────────────────────────────────────────────────────────
     print(f"[PDF] {chunk_label} Step 1: compact analysis…")
-    analysis = await _google_request(compact_parts, gen_free)
+    analysis = await _google_request(compact_parts, gen_free, free_form=True)
     print(f"[PDF] {chunk_label} analysis_len={len(analysis)}")
 
     # If step 1 already returned complete JSON with ≥2 questions, use it directly
@@ -667,7 +677,7 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
     print(f"[MARK] Step 1: compact analysis…")
     analysis = ""
     try:
-        analysis = await _google_request(compact_parts, gen_free)
+        analysis = await _google_request(compact_parts, gen_free, free_form=True)
         print(f"[MARK] Step 1: analysis_len={len(analysis)}")
 
         # If step 1 already returned valid JSON with enough questions, use it
@@ -684,7 +694,7 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
     if analysis:
         # Count how many question blocks Step 1 found so we can check completeness
         import re as _re
-        step1_q_nums = _re.findall(r'---\s*Q([\d()\w]+)', analysis)
+        step1_q_nums = _re.findall(r'---\s*Q\s*([\d]+(?:\([a-z]+\))*(?:\([ivx]+\))*)', analysis)
         expected_count = len(step1_q_nums) if step1_q_nums else "all"
         conversion_prompt = (
             "You just analysed a Cambridge IGCSE Mathematics 0580 answer paper and produced "
