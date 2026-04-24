@@ -558,19 +558,27 @@ function renderResult(data, containerId) {
     const ma      = q.marks_awarded ?? 0;
     const mx      = q.marks_available ?? 0;
     const qn      = q.question_number ?? i+1;
+    const isWrong = ma < mx;                          // partial or zero marks
     const amended = q.amended ? 'chip-amended' : '';
     const chip    = q.amended
       ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
       : markChip(ma, mx);
     const hasSol  = q.correct_answer || q.worked_solution;
     const solId   = `sol-${cardId}-${i}`;
+    // Auto-expand solution panel for wrong/partial answers
+    const solOpenClass = isWrong && hasSol ? ' open' : '';
     const solRow  = hasSol ? `
-    <tr class="sol-row" id="${solId}">
+    <tr class="sol-row${solOpenClass}" id="${solId}">
       <td colspan="5" style="padding:0;">
         <div class="sol-panel">
+          ${isWrong && q.student_answer ? `
+          <div class="sol-answer" style="margin-bottom:8px;">
+            <span class="sol-answer-label" style="color:var(--red);">✗ Student's Answer</span>
+            <span class="sol-answer-value" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.3);color:var(--text);">${escHtml(q.student_answer)}</span>
+          </div>` : ''}
           ${q.correct_answer ? `
           <div class="sol-answer">
-            <span class="sol-answer-label">✓ Answer</span>
+            <span class="sol-answer-label">✓ Correct Answer</span>
             <span class="sol-answer-value">${escHtml(q.correct_answer)}</span>
           </div>` : ''}
           ${q.worked_solution ? `
@@ -589,7 +597,8 @@ function renderResult(data, containerId) {
       </td>
       <td style="font-size:12px;color:var(--text2);line-height:1.4;">
         ${escHtml(q.feedback || '')}
-        ${hasSol ? `<br><button class="sol-toggle" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Show Solution</button>` : ''}
+        ${hasSol && !isWrong ? `<br><button class="sol-toggle" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Show Solution</button>` : ''}
+        ${hasSol && isWrong ? `<br><button class="sol-toggle open" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Hide Solution</button>` : ''}
       </td>
     </tr>${solRow}`;
   }).join('');
@@ -632,16 +641,19 @@ function renderResult(data, containerId) {
         <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${cardId}')">Cancel</button>
       </div>` : ''}
 
-      ${data.overall_feedback ? `
-      <div class="feedback-box">
-        <strong style="font-size:12px;color:var(--accent);display:block;margin-bottom:6px;">Student Feedback</strong>
-        ${escHtml(data.overall_feedback)}
-      </div>` : ''}
-
-      ${data.teacher_notes ? `
-      <div class="teacher-box" style="margin-top:10px;">
-        <strong style="font-size:12px;color:var(--yellow);display:block;margin-bottom:6px;">Teacher Notes</strong>
-        ${escHtml(data.teacher_notes)}
+      ${data.overall_feedback || data.teacher_notes ? `
+      <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:16px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;letter-spacing:0.3px;">📋 Overall Assessment</div>
+        ${data.overall_feedback ? `
+        <div class="feedback-box" style="margin-bottom:10px;">
+          <strong style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent);display:block;margin-bottom:8px;">💬 Student Feedback</strong>
+          <div style="font-size:13px;line-height:1.7;color:var(--text);">${escHtml(data.overall_feedback)}</div>
+        </div>` : ''}
+        ${data.teacher_notes ? `
+        <div class="teacher-box">
+          <strong style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--yellow);display:block;margin-bottom:8px;">📝 Teacher Notes</strong>
+          <div style="font-size:13px;line-height:1.7;color:var(--text2);">${escHtml(data.teacher_notes)}</div>
+        </div>` : ''}
       </div>` : ''}
 
       ${containerId === 'mResult' ? `
