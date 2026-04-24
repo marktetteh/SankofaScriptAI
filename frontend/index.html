@@ -124,6 +124,23 @@ tr:hover .edit-mark-btn{opacity:1;}
 .amend-bar span{font-size:12px;color:var(--orange);}
 .unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);flex-shrink:0;}
 
+/* ── Confirm modal ── */
+#confirmModal{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;}
+#confirmModal.open{display:flex;}
+.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5);}
+.confirm-box h3{margin:0 0 6px;font-size:16px;color:var(--text);}
+.confirm-box p{margin:0 0 18px;font-size:13px;color:var(--text2);line-height:1.6;}
+.confirm-changes{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:13px;}
+.confirm-change-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);}
+.confirm-change-row:last-child{border-bottom:none;}
+.confirm-change-row .qnum{font-weight:700;color:var(--accent);}
+.confirm-change-row .before{color:var(--red);text-decoration:line-through;opacity:0.8;}
+.confirm-change-row .arrow{color:var(--text2);margin:0 6px;}
+.confirm-change-row .after{color:var(--green);font-weight:700;}
+.confirm-btns{display:flex;gap:10px;justify-content:flex-end;}
+.confirm-warning{font-size:11px;color:var(--orange);margin-bottom:16px;display:flex;gap:6px;align-items:flex-start;}
+.confirm-warning svg{flex-shrink:0;margin-top:1px;}
+
 /* ── Batch rows ── */
 .batch-row{display:flex;align-items:center;gap:10px;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
 .batch-row .student-num{font-size:12px;color:var(--text2);font-weight:600;width:24px;flex-shrink:0;text-align:center;}
@@ -461,6 +478,23 @@ tr:hover .edit-mark-btn{opacity:1;}
   <div class="loading-msg" id="loadingMsg">Gemma is reading the paper…<br>This may take 30–90 seconds.</div>
 </div>
 
+<!-- Confirm amendment modal -->
+<div id="confirmModal" onclick="if(event.target===this)closeConfirmModal()">
+  <div class="confirm-box">
+    <h3>Confirm Mark Changes</h3>
+    <p>You are about to permanently update the following marks for <strong id="confirmStudentName"></strong>:</p>
+    <div class="confirm-changes" id="confirmChangesList"></div>
+    <div class="confirm-warning">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      This action is permanent and cannot be undone. The original AI marks will be replaced.
+    </div>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirmSaveBtn" onclick="confirmSaveAmendments()">✔ Save Changes</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast container -->
 <div id="toast"></div>
 
@@ -697,11 +731,60 @@ function recordAmendment(cardId, qNum, val, rowIdx, max) {
   if (inp) inp.value = clamped;
 }
 
-async function saveAmendments(cardId, subId) {
+// ── Pending confirm state ─────────────────────────────────────────────────────
+let _pendingConfirm = null;  // { cardId, subId, studentName, changes }
+
+function saveAmendments(cardId, subId) {
   const amendments = pendingAmendments[cardId];
   if (!amendments || !Object.keys(amendments).length) return;
 
-  const questions = Object.entries(amendments).map(([qn, ma]) => ({
+  // Gather before/after info for each amended question
+  const changes = Object.entries(amendments).map(([qn, newMa]) => {
+    // Find the original mark from the chip element text (e.g. "2/3" → before=2)
+    const chipEl = [...document.querySelectorAll(`[id^="chip-${cardId}-"]`)]
+      .find(el => {
+        const row = el.closest('tr');
+        return row && row.querySelector('td')?.textContent.trim().replace('Q','') === String(qn);
+      });
+    const chipText = chipEl?.querySelector('.mark-chip')?.textContent || '';
+    const beforeMa = parseInt(chipText.split('/')[0]) ?? '?';
+    const mx       = parseInt(chipText.split('/')[1]) ?? '?';
+    return { qn, beforeMa, newMa, mx };
+  });
+
+  // Get student name from hero element
+  const heroName = document.querySelector(`#card-${cardId} .hero-name`)?.textContent || 'this student';
+
+  // Store pending confirm and open modal
+  _pendingConfirm = { cardId, subId };
+  document.getElementById('confirmStudentName').textContent = heroName;
+
+  const list = document.getElementById('confirmChangesList');
+  list.innerHTML = changes.map(c => `
+    <div class="confirm-change-row">
+      <span class="qnum">Q${c.qn}</span>
+      <span>
+        <span class="before">${c.beforeMa}/${c.mx}</span>
+        <span class="arrow">→</span>
+        <span class="after">${c.newMa}/${c.mx}</span>
+      </span>
+    </div>`).join('');
+
+  document.getElementById('confirmModal').classList.add('open');
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmModal').classList.remove('open');
+  _pendingConfirm = null;
+}
+
+async function confirmSaveAmendments() {
+  if (!_pendingConfirm) return;
+  const { cardId, subId } = _pendingConfirm;
+  closeConfirmModal();
+
+  const amendments = pendingAmendments[cardId];
+  const questions  = Object.entries(amendments).map(([qn, ma]) => ({
     question_number: qn, marks_awarded: ma
   }));
 
@@ -736,7 +819,6 @@ async function saveAmendments(cardId, subId) {
         : markChip(ma, mx);
     });
 
-    // Hide save bar and clear pending
     const bar = document.getElementById(`amendbar-${cardId}`);
     if (bar) bar.style.display = 'none';
     delete pendingAmendments[cardId];
