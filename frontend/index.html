@@ -834,6 +834,22 @@ async function markSinglePaper() {
     doneLoading();
 
     document.getElementById('mResult').innerHTML = '';
+    // Warn if the AI returned 0 questions instead of silently showing 0/0
+    if (!data.questions || data.questions.length === 0) {
+      document.getElementById('mResult').innerHTML =
+        `<div class="card">
+          <div style="color:var(--yellow);font-weight:600;margin-bottom:10px;">⚠️ No questions detected in this paper</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.7;">
+            The AI couldn't read any questions from this file. Try the following:<br><br>
+            1. <strong>Use a clearer photo</strong> — make sure the whole page is visible and well-lit<br>
+            2. <strong>Try a JPG/PNG</strong> instead of PDF if you have a photo of the paper<br>
+            3. <strong>Test the AI connection</strong> — <a href="/api/debug/test-ai" target="_blank" style="color:var(--accent);">click here to run a connection test</a> and check for errors<br>
+            4. Make sure your Google API key has quota remaining at <a href="https://aistudio.google.com" target="_blank" style="color:var(--accent);">aistudio.google.com</a>
+          </div>
+        </div>`;
+      toast('⚠️ No questions detected — see guidance below', 'err');
+      return;
+    }
     renderResult(data, 'mResult');
     toast(`Marked! ${data.total_marks_awarded}/${data.total_marks_available} — Grade ${data.grade}`, 'ok');
     document.getElementById('mResult').scrollIntoView({ behavior: 'smooth' });
@@ -841,8 +857,14 @@ async function markSinglePaper() {
     doneLoading();
     toast('Error: ' + e.message, 'err');
     document.getElementById('mResult').innerHTML =
-      `<div class="card"><div style="color:var(--red);">❌ ${escHtml(e.message)}<br><br>
-      Check that the backend is running and your API key is set.</div></div>`;
+      `<div class="card">
+        <div style="color:var(--red);font-weight:600;margin-bottom:10px;">❌ Marking failed</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.7;">
+          <strong>Error:</strong> ${escHtml(e.message)}<br><br>
+          <strong>Diagnose:</strong> <a href="/api/debug/test-ai" target="_blank" style="color:var(--accent);">Click here to test the AI connection</a>
+          — this will show the exact error from Google's API.
+        </div>
+      </div>`;
   }
 }
 

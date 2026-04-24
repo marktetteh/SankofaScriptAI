@@ -499,9 +499,12 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
                 awarded = max(0, int(q.get("marks_awarded",  0)))
                 q["marks_available"] = avail
                 q["marks_awarded"]   = min(awarded, avail)
+        except HTTPException as ex:
+            # Surface AI/network errors directly to the caller instead of silently returning 0 marks
+            raise HTTPException(ex.status_code, f"AI error on {chunk_label}: {ex.detail}")
         except Exception as ex:
             print(f"[PDF] {chunk_label} error: {ex}")
-            result = {}
+            raise HTTPException(500, f"Unexpected error on {chunk_label}: {str(ex)}")
 
         # Grab paper metadata from first chunk
         if is_first:
@@ -754,6 +757,31 @@ async def health():
         except Exception:
             provider_info["ollama_running"] = False
     return {"status": "ok", **provider_info}
+
+
+@app.get("/api/debug/test-ai")
+async def test_ai():
+    """Test the AI connection with a simple text-only prompt. Use this to diagnose issues."""
+    if not GOOGLE_API_KEY:
+        return {"ok": False, "error": "GOOGLE_API_KEY is not set in backend/.env"}
+    try:
+        parts = [{"text": "Reply with exactly this JSON and nothing else: {\"ok\": true, \"message\": \"AI connection working\"}"}]
+        gen   = {"temperature": 0, "maxOutputTokens": 64, "responseMimeType": "application/json"}
+        url   = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
+        payload = {"contents": [{"parts": parts}], "generationConfig": gen}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            return {"ok": False, "http_status": resp.status_code, "error": resp.text[:600]}
+        data  = resp.json()
+        cands = data.get("candidates", [])
+        if not cands:
+            return {"ok": False, "error": "No candidates returned", "raw": json.dumps(data)[:400]}
+        text = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+        finish = cands[0].get("finishReason","?")
+        return {"ok": True, "model": GOOGLE_MODEL, "finish_reason": finish, "response": text}
+    except Exception as ex:
+        return {"ok": False, "error": str(ex)}
 
 
 @app.post("/api/mark/paper")
