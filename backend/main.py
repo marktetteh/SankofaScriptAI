@@ -189,7 +189,9 @@ _SYSTEM_FREE = (
 
 async def _google_request(parts: list, gen_config: dict, free_form: bool = False) -> str:
     """Internal: send one request to the Google AI API, return text content.
-    Use free_form=True for Step 1 analysis calls that expect plain text output."""
+    Use free_form=True for Step 1 analysis calls that expect plain text output.
+    Automatically retries up to 3 times on transient 500 errors."""
+    import asyncio
     payload = {
         "system_instruction": {
             "parts": [{"text": _SYSTEM_FREE if free_form else _SYSTEM_JSON}]
@@ -198,30 +200,42 @@ async def _google_request(parts: list, gen_config: dict, free_form: bool = False
         "generationConfig": gen_config,
     }
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
-    async with httpx.AsyncClient(timeout=180.0) as client:
+
+    last_error = None
+    for attempt in range(1, 4):   # up to 3 attempts
         try:
-            resp = await client.post(url, json=payload)
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(url, json=payload)
         except httpx.ConnectError:
-            raise HTTPException(503, "Cannot reach Google AI API — check your internet connection and try again.")
+            raise HTTPException(503, "Cannot reach Google AI API — check your internet connection.")
         except httpx.TimeoutException:
-            raise HTTPException(504, "Google AI API timed out — the image may be too large or the network is slow.")
+            raise HTTPException(504, "Google AI API timed out — the file may be too large.")
         except httpx.RequestError as e:
-            raise HTTPException(503, f"Network error contacting Google AI: {type(e).__name__}")
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code,
-                                f"Google AI error ({resp.status_code}): {resp.text[:600]}")
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise HTTPException(500,
-                                f"AI returned no candidates: {json.dumps(data)[:400]}")
-        finish_reason = candidates[0].get("finishReason", "unknown")
-        out_parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in out_parts).strip()
-        print(f"[AI] finishReason={finish_reason}  response_len={len(text)}")
-        if not text:
-            print(f"[AI] Empty text. Candidate: {json.dumps(candidates[0])[:400]}")
-        return text
+            raise HTTPException(503, f"Network error: {type(e).__name__}")
+
+        if resp.status_code == 200:
+            break
+        # Retry on 500 (transient Google internal error) with backoff
+        if resp.status_code == 500 and attempt < 3:
+            wait = attempt * 3
+            print(f"[AI] 500 INTERNAL on attempt {attempt} — retrying in {wait}s…")
+            await asyncio.sleep(wait)
+            last_error = resp.text
+            continue
+        raise HTTPException(resp.status_code,
+                            f"Google AI error ({resp.status_code}): {resp.text[:600]}")
+
+    data = resp.json()
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise HTTPException(500, f"AI returned no candidates: {json.dumps(data)[:400]}")
+    finish_reason = candidates[0].get("finishReason", "unknown")
+    out_parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in out_parts).strip()
+    print(f"[AI] finishReason={finish_reason}  response_len={len(text)}")
+    if not text:
+        print(f"[AI] Empty text. Candidate: {json.dumps(candidates[0])[:400]}")
+    return text
 
 
 async def call_google(prompt: str, file_b64: str, mime_type: str, schema: dict = None) -> str:
@@ -465,7 +479,7 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
 
     reader     = PdfReader(io.BytesIO(pdf_bytes))
     total_pages = len(reader.pages)
-    CHUNK      = 4   # pages per chunk — keeps output well within token limits
+    CHUNK      = 2   # pages per chunk — smaller chunks avoid Google 500 INTERNAL errors
     print(f"[PDF] {total_pages} pages → {((total_pages-1)//CHUNK)+1} chunks of {CHUNK} pages")
 
     all_questions    = []
