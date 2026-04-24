@@ -1051,6 +1051,10 @@ async function markBatch() {
 
   for (let i = 0; i < entries.length; i++) {
     const { name, file } = entries[i];
+
+    // Brief pause between papers to avoid API rate limits (skip before first)
+    if (i > 0) await new Promise(r => setTimeout(r, 3000));
+
     document.getElementById('loadingMsg').innerHTML =
       `Marking paper ${i+1} of ${entries.length}<br>
        <strong>${escHtml(name)}</strong><br>

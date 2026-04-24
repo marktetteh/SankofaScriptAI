@@ -478,9 +478,11 @@ def pdf_to_jpeg_pages(pdf_bytes: bytes) -> list:
         doc    = fitz.open(stream=pdf_bytes, filetype="pdf")
         pages  = []
         for i, page in enumerate(doc):
-            mat = fitz.Matrix(2.0, 2.0)          # 2× zoom — clear enough for handwriting
+            mat = fitz.Matrix(1.5, 1.5)          # 1.5× zoom — good quality, smaller payload
             pix = page.get_pixmap(matrix=mat, alpha=False)
-            pages.append((pix.tobytes("jpeg"), i + 1))
+            # Compress JPEG at 82% quality — sharp enough for handwriting, smaller file
+            jpeg_bytes = pix.tobytes("jpeg", jpg_quality=82)
+            pages.append((jpeg_bytes, i + 1))
         doc.close()
         print(f"[PDF] Converted {len(pages)} pages to JPEG via pymupdf")
         return pages
@@ -504,24 +506,48 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
         teacher_parts  = []
 
         print(f"[PDF] Marking {total_pages} pages as JPEG images…")
-        for jpeg_bytes, page_num in jpeg_pages:
-            is_first   = (page_num == 1)
-            img_b64    = base64.b64encode(jpeg_bytes).decode()
-            prompt     = chunk_prompt(page_num, page_num, total_pages, paper_type, is_first)
+        for idx, (jpeg_bytes, page_num) in enumerate(jpeg_pages):
+            import asyncio
+            # Small pause between pages to avoid hitting API rate limits
+            if idx > 0:
+                await asyncio.sleep(2)
+
+            is_first    = (page_num == 1)
+            prompt      = chunk_prompt(page_num, page_num, total_pages, paper_type, is_first)
             chunk_label = f"Page {page_num}"
             print(f"[PDF] Marking {chunk_label} ({len(jpeg_bytes)//1024}KB JPEG)…")
 
+            result = None
+            # Attempt 1: normal quality
             try:
-                result   = await _mark_chunk_two_step(prompt, img_b64, chunk_label, mime="image/jpeg")
-                chunk_qs = result.get("questions", [])
-                for q in chunk_qs:
-                    avail   = max(0, int(q.get("marks_available", 0)))
-                    awarded = max(0, int(q.get("marks_awarded",  0)))
-                    q["marks_available"] = avail
-                    q["marks_awarded"]   = min(awarded, avail)
+                img_b64 = base64.b64encode(jpeg_bytes).decode()
+                result  = await _mark_chunk_two_step(prompt, img_b64, chunk_label, mime="image/jpeg")
             except Exception as ex:
-                print(f"[PDF] {chunk_label} error: {ex} — skipping page")
-                continue   # skip failed page, don't abort the whole paper
+                print(f"[PDF] {chunk_label} attempt 1 failed: {ex} — retrying at lower quality…")
+                await asyncio.sleep(5)
+
+            # Attempt 2: heavily compressed (smaller payload)
+            if result is None:
+                try:
+                    import fitz
+                    doc2 = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    mat2 = fitz.Matrix(1.0, 1.0)   # 1× zoom, smaller
+                    pix2 = doc2[page_num - 1].get_pixmap(matrix=mat2, alpha=False)
+                    small_jpeg = pix2.tobytes("jpeg", jpg_quality=65)
+                    doc2.close()
+                    print(f"[PDF] {chunk_label} attempt 2: {len(small_jpeg)//1024}KB compressed JPEG…")
+                    img_b64 = base64.b64encode(small_jpeg).decode()
+                    result  = await _mark_chunk_two_step(prompt, img_b64, chunk_label, mime="image/jpeg")
+                except Exception as ex2:
+                    print(f"[PDF] {chunk_label} attempt 2 also failed: {ex2} — skipping page")
+                    continue   # skip this page, keep going with the rest
+
+            chunk_qs = result.get("questions", [])
+            for q in chunk_qs:
+                avail   = max(0, int(q.get("marks_available", 0)))
+                awarded = max(0, int(q.get("marks_awarded",  0)))
+                q["marks_available"] = avail
+                q["marks_awarded"]   = min(awarded, avail)
 
             if is_first:
                 paper_type = result.get("paper_type", paper_type_hint)
