@@ -41,7 +41,7 @@ if "!GOOGLE_API_KEY!"=="" (
 
 :: ── STEP 3: Install dependencies ─────────────────────────────────────────────
 echo  [*] Checking dependencies...
-pip install -r backend\requirements.txt -q --disable-pip-version-check
+python -m pip install -r backend\requirements.txt -q --disable-pip-version-check
 if %errorlevel% neq 0 (
     echo  [ERROR] Failed to install dependencies.
     pause & exit /b 1
