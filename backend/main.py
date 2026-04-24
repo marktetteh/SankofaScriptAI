@@ -202,7 +202,7 @@ async def _google_request(parts: list, gen_config: dict, free_form: bool = False
     url = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
 
     last_error = None
-    for attempt in range(1, 4):   # up to 3 attempts
+    for attempt in range(1, 5):   # up to 4 attempts
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(url, json=payload)
@@ -216,8 +216,8 @@ async def _google_request(parts: list, gen_config: dict, free_form: bool = False
         if resp.status_code == 200:
             break
         # Retry on 500 (transient Google internal error) with backoff
-        if resp.status_code == 500 and attempt < 3:
-            wait = attempt * 3
+        if resp.status_code == 500 and attempt < 4:
+            wait = attempt * 5
             print(f"[AI] 500 INTERNAL on attempt {attempt} — retrying in {wait}s…")
             await asyncio.sleep(wait)
             last_error = resp.text
@@ -479,7 +479,7 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
 
     reader     = PdfReader(io.BytesIO(pdf_bytes))
     total_pages = len(reader.pages)
-    CHUNK      = 2   # pages per chunk — smaller chunks avoid Google 500 INTERNAL errors
+    CHUNK      = 1   # 1 page per chunk — smallest payload, avoids Google 500 INTERNAL errors
     print(f"[PDF] {total_pages} pages → {((total_pages-1)//CHUNK)+1} chunks of {CHUNK} pages")
 
     all_questions    = []

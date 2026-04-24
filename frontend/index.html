@@ -1001,12 +1001,18 @@ function onBatchFile(n, e) {
   }
 }
 
+// Store batch settings globally so retry can always access them
+let _batchSettings = {};
+
 async function markBatch() {
   const cls        = document.getElementById('bClass').value.trim();
   const paper      = document.getElementById('bPaper').value;
   const assessType = document.getElementById('bAssessType').value;
   const exNum      = document.getElementById('bExerciseNum').value;
   if (!cls) { toast('Select a class', 'err'); return; }
+
+  // Save for retry buttons to use
+  _batchSettings = { cls, paper, assessType, exNum };
 
   // Collect rows
   const rows = document.querySelectorAll('.batch-row');
@@ -1144,10 +1150,7 @@ function renderBatchResults(cls, results, failed = []) {
 async function retryOne(failedIndex) {
   const entry = _failedEntries[failedIndex];
   if (!entry) return;
-  const cls        = document.getElementById('bClass')?.value || '';
-  const paper      = document.getElementById('bPaper')?.value || 'Auto-detect';
-  const assessType = document.getElementById('bAssessType')?.value || 'Class Exercise';
-  const exNum      = document.getElementById('bExNum')?.value || 1;
+  const { cls, paper, assessType, exNum } = _batchSettings;
 
   toast(`Retrying ${entry.student_name}…`, 'info');
   try {
