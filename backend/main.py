@@ -204,7 +204,7 @@ async def _google_request(parts: list, gen_config: dict, free_form: bool = False
     last_error = None
     for attempt in range(1, 5):   # up to 4 attempts
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=240.0) as client:
                 resp = await client.post(url, json=payload)
         except httpx.ConnectError:
             raise HTTPException(503, "Cannot reach Google AI API — check your internet connection.")
@@ -286,21 +286,33 @@ async def call_ai(prompt: str, file_b64: str, mime_type: str = "image/jpeg", sch
 # to ~300 tokens reduces Step 1 latency from ~25 s to ~3–5 s.
 COMPACT_ANALYSIS_PROMPT = """Cambridge IGCSE 0580 Mathematics examiner. Mark the student's answer paper shown.
 
-STEP 1 — SCAN: Read the paper top to bottom. List every question number you see (e.g. 1(a), 1(b)(i), 1(c), 2(a)…).
+STEP 1 — SCAN ALL QUESTIONS FIRST (do not start marking yet):
+Read the ENTIRE paper top to bottom. List EVERY question part you can see, including:
+- Main questions: 1, 2, 3 …
+- Sub-questions: 1(a), 1(b), 1(c) …
+- Sub-sub-questions: 1(b)(i), 1(b)(ii), 2(a)(i) …
+- Questions inside tables, diagrams, or grids
 
-STEP 2 — MARK EACH: For every question you listed, write this compact block — no prose, no intro:
+Write them as a single comma-separated line, e.g.:
+Questions found: 1(a), 1(b)(i), 1(b)(ii), 1(c), 2(a), 2(b), 3(a), 3(b), 4
+
+IMPORTANT: Cambridge IGCSE papers typically have 5–30 question parts. If you see fewer than 5, scan again — they are present. The question numbers and mark allocations in brackets [n] are printed on the paper.
+
+STEP 2 — MARK EACH QUESTION: For EVERY question you listed in Step 1, write a compact block. Do NOT skip any.
 
 --- Q<num> [<marks>M] ---
 Student: <exact student answer, or "No attempt">
 Award: <n>/<marks>
-Answer: <correct final answer, e.g. "x=3" or "-180">
-Solution: <concise step-by-step, e.g. "Step 1: 5×(-3)=-15. Step 2: (-3)×(-4)=12. Step 3: (-15)×12=-180.">
+Answer: <correct final answer, e.g. "x=3" or "−180">
+Solution: <concise step-by-step, e.g. "Step 1: 5×(−3)=−15. Step 2: (−3)×(−4)=12. Step 3: −15+12=−3.">
 Feedback: <one sentence for the student>
 
-After all questions, write:
+RULE: The number of Q-blocks in Step 2 MUST exactly match the number of questions listed in Step 1.
+
+After ALL questions, write:
 Paper: <Core/Extended> | Code: <0580/XX if visible, else blank>
 Overall: <2 sentences of encouragement for the student>
-Teacher: <1 sentence about patterns you noticed>
+Teacher: <1 sentence about patterns noticed>
 
 Keep every block SHORT. One line per field."""
 
@@ -424,7 +436,9 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str, mi
 
     Step 1: Free-form analysis (no schema) → model reads ALL questions.
     Step 2: Text-only JSON conversion (with CHUNK_SCHEMA) → structured output.
+    Step 3 (fallback): If < 5 questions returned, direct image+schema call.
     """
+    import re as _re
     # Use compact prompt for Step 1 to minimise output length → faster
     compact_parts = [{"text": COMPACT_ANALYSIS_PROMPT}, {"inline_data": {"mime_type": mime, "data": chunk_b64}}]
     gen_free      = {"temperature": 0.1, "maxOutputTokens": 8192, "topP": 0.9}
@@ -434,26 +448,33 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str, mi
     analysis = await _google_request(compact_parts, gen_free, free_form=True)
     print(f"[PDF] {chunk_label} analysis_len={len(analysis)}")
 
-    # If step 1 already returned complete JSON with ≥2 questions, use it directly
+    # If step 1 already returned complete JSON with ≥5 questions, use it directly
     if analysis.strip().startswith("{") and '"questions"' in analysis:
         parsed = parse_json(analysis)
-        if len(parsed.get("questions", [])) >= 2:
+        if len(parsed.get("questions", [])) >= 5:
             print(f"[PDF] {chunk_label} Step 1 returned complete JSON — skipping Step 2")
             return parsed
 
     # ── Step 2 ───────────────────────────────────────────────────────────────
-    import re as _re
-    step1_q_nums = _re.findall(r'---\s*Q([\d()\w]+)', analysis)
+    # Parse both the "Questions found:" list and the Q-block headers
+    step1_q_list = _re.findall(r'Questions found:(.*?)(?:\n|$)', analysis)
+    if step1_q_list:
+        # Parse comma-separated list e.g. "1(a), 1(b)(i), 2(a)"
+        step1_q_nums = [q.strip() for q in step1_q_list[0].split(',') if q.strip()]
+    else:
+        step1_q_nums = _re.findall(r'---\s*Q([\d()a-zA-Z]+)', analysis)
+
     expected_count = len(step1_q_nums) if step1_q_nums else "all"
-    print(f"[PDF] {chunk_label} Step 2: JSON conversion ({expected_count} questions)…")
+    print(f"[PDF] {chunk_label} Step 2: JSON conversion (expected {expected_count} questions: {step1_q_nums})…")
     conversion_prompt = (
         "You just analysed pages of a Cambridge IGCSE Mathematics 0580 answer paper and produced "
         "the following marking notes. Convert your ENTIRE analysis into the required JSON format.\n\n"
-        f"CRITICAL: Your analysis contains {expected_count} questions: {step1_q_nums}. "
-        "You MUST include every single one in the 'questions' array — do not skip or drop any. "
-        f"The final 'questions' array MUST have exactly {expected_count} entries.\n\n"
+        f"CRITICAL: Your analysis identified {expected_count} questions: {step1_q_nums}. "
+        "You MUST include EVERY SINGLE ONE in the 'questions' array — do not skip, merge, or drop any. "
+        f"The final 'questions' array MUST have exactly {expected_count} entries.\n"
+        "If a question has sub-parts (e.g. 1(a), 1(b)), each sub-part is a SEPARATE entry.\n\n"
         f"YOUR ANALYSIS:\n{analysis}\n\n"
-        "Convert ALL questions above to JSON. Also populate: paper_type, paper_code, "
+        "Convert ALL questions above to JSON now. Also populate: paper_type, paper_code, "
         "total_marks_available, chunk_feedback."
     )
     gen_schema = {
@@ -461,11 +482,33 @@ async def _mark_chunk_two_step(prompt: str, chunk_b64: str, chunk_label: str, mi
         "responseMimeType": "application/json",
         "responseSchema": CHUNK_SCHEMA,
     }
-    print(f"[AI] gemma-4-31b-it | CHUNK schema (Step 2 text-only)")
+    print(f"[AI] {GOOGLE_MODEL} | CHUNK schema (Step 2 text-only)")
     json_text = await _google_request([{"text": conversion_prompt}], gen_schema)
     parsed    = parse_json(json_text)
     q_nums    = [q.get("question_number", "?") for q in parsed.get("questions", [])]
-    print(f"[PDF] {chunk_label} questions={len(q_nums)} — {q_nums}")
+    print(f"[PDF] {chunk_label} Step 2: questions={len(q_nums)} — {q_nums}")
+
+    # ── Step 3: fallback if < 5 questions (or far below expected) ────────────
+    expected_int = len(step1_q_nums) if step1_q_nums else 0
+    got = len(q_nums)
+    if got < 5 or (expected_int >= 5 and got < expected_int // 2):
+        print(f"[PDF] {chunk_label} Only {got} questions — fallback to direct image+schema…")
+        try:
+            gen_direct = {
+                "temperature": 0.2, "maxOutputTokens": 65536, "topP": 0.95,
+                "responseMimeType": "application/json",
+                "responseSchema": CHUNK_SCHEMA,
+            }
+            direct_parts = [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": chunk_b64}}]
+            fb_text   = await _google_request(direct_parts, gen_direct)
+            fb_parsed = parse_json(fb_text)
+            fb_qs     = fb_parsed.get("questions", [])
+            if len(fb_qs) > got:
+                print(f"[PDF] {chunk_label} Fallback improved: {got} → {len(fb_qs)} questions")
+                return fb_parsed
+        except Exception as fb_ex:
+            print(f"[PDF] {chunk_label} Fallback also failed: {fb_ex}")
+
     return parsed
 
 
@@ -559,6 +602,44 @@ async def mark_pdf_chunked(pdf_bytes: bytes, paper_type_hint: str) -> dict:
 
         awarded   = sum(q.get("marks_awarded",  0) for q in all_questions)
         available = sum(q.get("marks_available", 0) for q in all_questions)
+
+        # ── Minimum question check ────────────────────────────────────────────
+        # If the whole paper returned < 5 questions across all pages, something
+        # went wrong.  Retry by sending the first page again with a "forced count"
+        # prompt that explicitly demands ≥ 5 questions.
+        if len(all_questions) < 5 and total_pages >= 1:
+            import asyncio as _asyncio
+            print(f"[PDF] Only {len(all_questions)} total questions — retrying page 1 with forced-count prompt…")
+            await _asyncio.sleep(3)
+            try:
+                import fitz as _fitz
+                doc_retry = _fitz.open(stream=pdf_bytes, filetype="pdf")
+                mat_retry = _fitz.Matrix(2.0, 2.0)   # higher zoom for better detail
+                pix_retry = doc_retry[0].get_pixmap(matrix=mat_retry, alpha=False)
+                jpeg_retry = pix_retry.tobytes("jpeg", jpg_quality=88)
+                doc_retry.close()
+                b64_retry = base64.b64encode(jpeg_retry).decode()
+                forced_prompt = (
+                    "IMPORTANT: This Cambridge IGCSE paper contains MULTIPLE questions. You MUST find "
+                    "and mark AT LEAST 5 question parts. Scan every line carefully — look for question "
+                    "numbers printed in the left margin (1, 2, 3 …) and their sub-parts in brackets "
+                    "(a), (b)(i), etc. Each one with a mark allocation [n] is a separate question.\n\n"
+                    + chunk_prompt(1, 1, total_pages, paper_type, True)
+                )
+                retry_result = await _mark_chunk_two_step(forced_prompt, b64_retry, "Page 1 RETRY", mime="image/jpeg")
+                retry_qs = retry_result.get("questions", [])
+                if len(retry_qs) > len(all_questions):
+                    print(f"[PDF] Retry improved: {len(all_questions)} → {len(retry_qs)} questions")
+                    all_questions = retry_qs
+                    if retry_result.get("chunk_feedback"):
+                        feedback_parts = [retry_result["chunk_feedback"]]
+                    if retry_result.get("teacher_notes"):
+                        teacher_parts = [retry_result["teacher_notes"]]
+                    awarded   = sum(q.get("marks_awarded",  0) for q in all_questions)
+                    available = sum(q.get("marks_available", 0) for q in all_questions)
+            except Exception as retry_ex:
+                print(f"[PDF] Forced-count retry failed: {retry_ex}")
+
         return finalise({
             "paper_type": paper_type,
             "total_marks_available": available,
@@ -797,17 +878,24 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
         pass   # step 1 failed — still try step 2 with whatever we have
 
     # ── Step 2: text-only JSON conversion using step 1's analysis ────────────
+    step1_q_nums = []
     if analysis:
-        # Count how many question blocks Step 1 found so we can check completeness
         import re as _re
-        step1_q_nums = _re.findall(r'---\s*Q\s*([\d]+(?:\([a-z]+\))*(?:\([ivx]+\))*)', analysis)
+        # Parse the "Questions found:" line first (new format)
+        q_list_match = _re.findall(r'Questions found:(.*?)(?:\n|$)', analysis)
+        if q_list_match:
+            step1_q_nums = [q.strip() for q in q_list_match[0].split(',') if q.strip()]
+        else:
+            # Fall back to Q-block headers
+            step1_q_nums = _re.findall(r'---\s*Q\s*([\d()a-zA-Z]+)', analysis)
+
         expected_count = len(step1_q_nums) if step1_q_nums else "all"
         conversion_prompt = (
             "You just analysed a Cambridge IGCSE Mathematics 0580 answer paper and produced "
             "the following marking notes. Convert your ENTIRE analysis into the required JSON format.\n\n"
-            f"CRITICAL: Your analysis contains {expected_count} questions: {step1_q_nums}. "
+            f"CRITICAL: Your analysis identified {expected_count} questions: {step1_q_nums}. "
             "You MUST include every single one of them in the 'questions' array — "
-            "do not skip, merge, or drop any question. "
+            "do not skip, merge, or drop any question. Each sub-part (e.g. 1(a), 1(b)) is a SEPARATE entry.\n"
             f"The final 'questions' array MUST have exactly {expected_count} entries.\n\n"
             f"YOUR ANALYSIS:\n{analysis}\n\n"
             "Convert ALL questions above to JSON now."
@@ -819,7 +907,7 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
             "responseMimeType": "application/json",
             "responseSchema": MARKING_SCHEMA,
         }
-        print(f"[MARK] Step 2: converting analysis to JSON (text-only)…")
+        print(f"[MARK] Step 2: converting analysis to JSON (expected {expected_count} questions)…")
         try:
             text_parts = [{"text": conversion_prompt}]
             json_text  = await _google_request(text_parts, gen_schema)
@@ -827,17 +915,19 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
             qs         = parsed.get("questions", [])
             q_nums     = [q.get("question_number", "?") for q in qs]
             print(f"[MARK] Step 2: questions={len(qs)} — {q_nums}")
-            if len(qs) >= 2:
+            # Accept if we got at least 5 questions OR at least half of what was detected
+            expected_int = len(step1_q_nums) if step1_q_nums else 0
+            if len(qs) >= 5 or (expected_int and len(qs) >= max(2, expected_int // 2)):
                 return _clamp_marks(parsed)
         except Exception as ex:
             print(f"[MARK] Step 2 failed: {ex}")
 
     # ── Fallback: image + schema in one shot ─────────────────────────────────
-    print(f"[MARK] Fallback: image + schema…")
+    print(f"[MARK] Fallback: direct image+schema (higher temperature for coverage)…")
     gen_schema_img = {
-        "temperature": 0.1,
+        "temperature": 0.2,   # slightly higher temperature to avoid lazy truncation
         "maxOutputTokens": 65536,
-        "topP": 0.9,
+        "topP": 0.95,
         "responseMimeType": "application/json",
         "responseSchema": MARKING_SCHEMA,
     }
@@ -845,6 +935,34 @@ async def _mark_image_with_retry(prompt: str, file_b64: str, mime: str) -> dict:
     parsed = parse_json(raw)
     qs     = parsed.get("questions", [])
     print(f"[MARK] Fallback: questions={len(qs)} — {[q.get('question_number','?') for q in qs]}")
+
+    # Last resort: if still < 5 questions, try once more with explicit count instruction
+    if len(qs) < 5:
+        print(f"[MARK] Still only {len(qs)} questions — final attempt with forced count prompt…")
+        try:
+            forced_prompt = (
+                "IMPORTANT: This Cambridge IGCSE paper has multiple questions. You MUST identify and mark "
+                "AT LEAST 5 question parts. Look carefully for all printed question numbers and their "
+                "sub-parts (e.g. 1(a), 1(b)(i), 2(a), etc.). Do not stop after the first 2-3 questions.\n\n"
+                + prompt
+            )
+            forced_parts = [
+                {"text": forced_prompt},
+                {"inline_data": {"mime_type": mime, "data": file_b64}}
+            ]
+            gen_forced = {
+                "temperature": 0.3, "maxOutputTokens": 65536, "topP": 0.95,
+                "responseMimeType": "application/json", "responseSchema": MARKING_SCHEMA,
+            }
+            raw2    = await _google_request(forced_parts, gen_forced)
+            parsed2 = parse_json(raw2)
+            qs2     = parsed2.get("questions", [])
+            print(f"[MARK] Final attempt: questions={len(qs2)}")
+            if len(qs2) > len(qs):
+                parsed = parsed2
+        except Exception as ex:
+            print(f"[MARK] Final attempt failed: {ex}")
+
     return _clamp_marks(parsed)
 
 
@@ -867,356 +985,4 @@ async def test_ai():
     """Test the AI connection with a simple text-only prompt. Use this to diagnose issues."""
     if not GOOGLE_API_KEY:
         return {"ok": False, "error": "GOOGLE_API_KEY is not set in backend/.env"}
-    try:
-        parts = [{"text": "Reply with exactly this JSON and nothing else: {\"ok\": true, \"message\": \"AI connection working\"}"}]
-        gen   = {"temperature": 0, "maxOutputTokens": 64, "responseMimeType": "application/json"}
-        url   = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
-        payload = {"contents": [{"parts": parts}], "generationConfig": gen}
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-        if resp.status_code != 200:
-            return {"ok": False, "http_status": resp.status_code, "error": resp.text[:600]}
-        data  = resp.json()
-        cands = data.get("candidates", [])
-        if not cands:
-            return {"ok": False, "error": "No candidates returned", "raw": json.dumps(data)[:400]}
-        text = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
-        finish = cands[0].get("finishReason","?")
-        return {"ok": True, "model": GOOGLE_MODEL, "finish_reason": finish, "response": text}
-    except Exception as ex:
-        return {"ok": False, "error": str(ex)}
-
-
-@app.post("/api/mark/paper")
-async def mark_paper(
-    student_name:     str        = Form(...),
-    class_name:       str        = Form(...),
-    paper_type:       str        = Form("Auto-detect"),
-    assessment_type:  str        = Form("Class Exercise"),
-    exercise_number:  int        = Form(1),
-    file:             UploadFile = File(...),
-):
-    """Mark a single student's answer paper (photo or PDF)."""
-    raw_bytes = await file.read()
-    mime      = mime_for(file.filename)
-    file_b64  = base64.b64encode(raw_bytes).decode()
-    prompt    = paper_prompt(paper_type)
-
-    size_kb = len(raw_bytes) // 1024
-    print(f"\n[MARK] {student_name} | {class_name} | {assessment_type} #{exercise_number} | {file.filename} ({mime}) | {size_kb}KB")
-    if size_kb < 150 and mime != "application/pdf":
-        print(f"[MARK] WARNING: image is only {size_kb}KB — low resolution may reduce accuracy. Recommend photos >300KB.")
-
-    if mime == "application/pdf":
-        result = await mark_pdf_chunked(raw_bytes, paper_type)
-    else:
-        parsed = await _mark_image_with_retry(prompt, file_b64, mime)
-        result = finalise(parsed)
-
-    # Attach assessment metadata to result so it's returned to frontend
-    result["assessment_type"]  = assessment_type
-    result["exercise_number"]  = exercise_number
-    result["marked_at"]        = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    conn = get_db()
-    try:
-        sub_id = save_submission(conn, student_name, class_name, result,
-                                 assessment_type, exercise_number)
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {"submission_id": sub_id, "student_name": student_name, **result}
-
-
-@app.post("/api/mark/batch")
-async def mark_batch(
-    class_name:       str              = Form(...),
-    paper_type:       str              = Form("Auto-detect"),
-    assessment_type:  str              = Form("Class Exercise"),
-    exercise_number:  int              = Form(1),
-    student_names:    str              = Form(...),
-    files:            List[UploadFile] = File(...),
-):
-    """Mark multiple students' papers in one request."""
-    try:
-        names = json.loads(student_names)
-    except Exception:
-        names = []
-
-    results = []
-    prompt  = paper_prompt(paper_type)
-
-    for i, file in enumerate(files):
-        student_name = names[i] if i < len(names) else f"Student {i + 1}"
-        raw_bytes    = await file.read()
-        mime         = mime_for(file.filename)
-        file_b64     = base64.b64encode(raw_bytes).decode()
-
-        print(f"\n[BATCH {i+1}/{len(files)}] {student_name} | {file.filename}")
-        try:
-            raw    = await call_ai(prompt, file_b64, mime)
-            result = parse_json(raw)
-            result = finalise(result)
-        except Exception as ex:
-            print(f"[BATCH] Error for {student_name}: {ex}")
-            result = {
-                "paper_type": "Unknown", "total_marks_available": 0,
-                "total_marks_awarded": 0, "percentage": 0, "grade": "U",
-                "questions": [], "overall_feedback": f"Error: {ex}",
-                "teacher_notes": "Could not process this paper."
-            }
-
-        result["assessment_type"] = assessment_type
-        result["exercise_number"] = exercise_number
-        result["marked_at"]       = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-        conn = get_db()
-        try:
-            sub_id = save_submission(conn, student_name, class_name, result,
-                                     assessment_type, exercise_number)
-            conn.commit()
-        finally:
-            conn.close()
-
-        results.append({"submission_id": sub_id, "student_name": student_name, **result})
-
-    awarded_list = [r["total_marks_awarded"] for r in results]
-    avg = round(sum(awarded_list) / len(awarded_list), 1) if awarded_list else 0
-    return {
-        "class_name":    class_name,
-        "total_marked":  len(results),
-        "class_average": avg,
-        "results":       results
-    }
-
-
-@app.patch("/api/submissions/{submission_id}/amend")
-async def amend_submission(submission_id: str, payload: dict):
-    """
-    Teacher amendment — update marks for one or more questions and recompute totals.
-    Payload: { "questions": [ { "question_number": "1(a)", "marks_awarded": 2 }, ... ] }
-    """
-    conn = get_db()
-    try:
-        row = conn.execute(
-            "SELECT questions_data, max_marks FROM submissions WHERE id=?",
-            (submission_id,)).fetchone()
-        if not row:
-            raise HTTPException(404, "Submission not found")
-
-        questions = json.loads(row["questions_data"] or "[]")
-        amendments = {q["question_number"]: q["marks_awarded"]
-                      for q in payload.get("questions", [])}
-
-        # Apply amendments
-        for q in questions:
-            qn = q.get("question_number", "")
-            if qn in amendments:
-                new_val = int(amendments[qn])
-                available = q.get("marks_available", 0)
-                # Clamp to valid range
-                q["marks_awarded"] = max(0, min(new_val, available))
-                q["amended"] = True   # flag so UI can show it was teacher-edited
-
-        # Recompute totals
-        awarded   = sum(q.get("marks_awarded",  0) for q in questions)
-        available = sum(q.get("marks_available", 0) for q in questions)
-        pct       = round((awarded / available) * 100, 1) if available > 0 else 0
-        grade     = grade_from_pct(pct)
-
-        conn.execute("""
-            UPDATE submissions
-            SET questions_data=?, marks_awarded=?, percentage=?, grade=?
-            WHERE id=?""",
-            (json.dumps(questions), awarded, pct, grade, submission_id))
-        conn.commit()
-    finally:
-        conn.close()
-
-    return {
-        "submission_id":       submission_id,
-        "total_marks_awarded": awarded,
-        "total_marks_available": available,
-        "percentage":          pct,
-        "grade":               grade,
-        "questions":           questions,
-    }
-
-
-@app.get("/api/submissions/{class_name}")
-async def list_submissions(class_name: str):
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT s.*, st.name as student_name
-        FROM submissions s
-        LEFT JOIN students st ON s.student_id = st.id
-        WHERE s.class_name = ?
-        ORDER BY s.marked_at DESC""", (class_name,)).fetchall()
-    conn.close()
-    return [
-        {**dict(r), "questions": json.loads(r["questions_data"] or "[]")}
-        for r in rows
-    ]
-
-
-@app.delete("/api/submissions/{submission_id}")
-async def delete_submission(submission_id: str):
-    """Delete a single student submission by ID."""
-    conn = get_db()
-    try:
-        result = conn.execute(
-            "DELETE FROM submissions WHERE id = ?", (submission_id,))
-        conn.commit()
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Submission not found")
-    finally:
-        conn.close()
-    return {"deleted": submission_id}
-
-
-@app.delete("/api/submissions/group/{assessment_type}/{exercise_number}/{class_name}")
-async def delete_group(assessment_type: str, exercise_number: int, class_name: str):
-    """Delete all submissions for a specific assessment group."""
-    conn = get_db()
-    try:
-        result = conn.execute(
-            "DELETE FROM submissions WHERE assessment_type=? AND exercise_number=? AND class_name=?",
-            (assessment_type, exercise_number, class_name))
-        conn.commit()
-        deleted = result.rowcount
-    finally:
-        conn.close()
-    return {"deleted_count": deleted}
-
-
-@app.get("/api/classes")
-async def list_classes():
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT c.name,
-               COUNT(s.id)          AS submission_count,
-               ROUND(AVG(s.percentage), 1) AS avg_percentage
-        FROM classes c
-        LEFT JOIN submissions s ON c.name = s.class_name
-        GROUP BY c.name
-        ORDER BY c.name""").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-@app.get("/api/analytics/{class_name}")
-async def class_analytics(class_name: str):
-    conn = get_db()
-    subs = conn.execute(
-        "SELECT * FROM submissions WHERE class_name=?", (class_name,)).fetchall()
-    conn.close()
-    if not subs:
-        return {"class_name": class_name, "total_submissions": 0}
-    n = len(subs)
-    grades: dict = {}
-    total_pct = 0.0
-    for s in subs:
-        g = s["grade"] or "U"
-        grades[g] = grades.get(g, 0) + 1
-        total_pct += s["percentage"] or 0
-    return {
-        "class_name":         class_name,
-        "total_submissions":  n,
-        "class_average":      round(total_pct / n, 1),
-        "grade_distribution": grades,
-    }
-
-
-@app.get("/api/export/{class_name}")
-async def export_csv(class_name: str):
-    conn = get_db()
-    rows = conn.execute("""
-        SELECT st.name, s.marks_awarded, s.max_marks, s.percentage,
-               s.grade, s.paper_type, s.overall_feedback, s.marked_at
-        FROM submissions s
-        LEFT JOIN students st ON s.student_id = st.id
-        WHERE s.class_name = ?
-        ORDER BY st.name""", (class_name,)).fetchall()
-    conn.close()
-    out = io.StringIO()
-    w   = csv.writer(out)
-    w.writerow(["Student", "Marks Awarded", "Max Marks", "Percentage",
-                "Grade", "Paper Type", "Feedback", "Date Marked"])
-    for r in rows:
-        w.writerow(list(r))
-    out.seek(0)
-    fname = f"SankofahScriptAI_{class_name}_{datetime.now().strftime('%Y%m%d')}.csv"
-    return StreamingResponse(
-        iter([out.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={fname}"}
-    )
-
-
-@app.get("/api/export-exercise")
-async def export_exercise_csv(
-    assessment_type:  str = "Class Exercise",
-    exercise_number:  int = 1,
-    class_name:       str = "",
-):
-    """Export a CSV for one specific exercise group (assessment type + number + class)."""
-    conn = get_db()
-    if class_name:
-        rows = conn.execute("""
-            SELECT st.name, s.class_name, s.marks_awarded, s.max_marks, s.percentage,
-                   s.grade, s.paper_type, s.assessment_type, s.exercise_number,
-                   s.overall_feedback, s.teacher_notes, s.marked_at
-            FROM submissions s
-            LEFT JOIN students st ON s.student_id = st.id
-            WHERE s.assessment_type = ? AND s.exercise_number = ? AND s.class_name = ?
-            ORDER BY s.percentage DESC""",
-            (assessment_type, exercise_number, class_name)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT st.name, s.class_name, s.marks_awarded, s.max_marks, s.percentage,
-                   s.grade, s.paper_type, s.assessment_type, s.exercise_number,
-                   s.overall_feedback, s.teacher_notes, s.marked_at
-            FROM submissions s
-            LEFT JOIN students st ON s.student_id = st.id
-            WHERE s.assessment_type = ? AND s.exercise_number = ?
-            ORDER BY s.class_name, s.percentage DESC""",
-            (assessment_type, exercise_number)).fetchall()
-    conn.close()
-
-    out = io.StringIO()
-    w   = csv.writer(out)
-    w.writerow(["Student", "Class", "Marks Awarded", "Max Marks", "Percentage",
-                "Grade", "Paper Type", "Assessment Type", "Exercise No.",
-                "Student Feedback", "Teacher Notes", "Date Marked"])
-    for r in rows:
-        w.writerow(list(r))
-    out.seek(0)
-
-    safe_type = assessment_type.replace(" ", "_")
-    cls_part  = f"_{class_name.replace(' ', '_')}" if class_name else ""
-    fname     = f"SankofahScriptAI_{safe_type}_{exercise_number}{cls_part}_{datetime.now().strftime('%Y%m%d')}.csv"
-    return StreamingResponse(
-        iter([out.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={fname}"}
-    )
-
-
-# ── Serve frontend ────────────────────────────────────────────────────────────
-
-FRONTEND = Path(__file__).parent.parent / "frontend" / "index.html"
-
-@app.get("/")
-async def serve_frontend():
-    if FRONTEND.exists():
-        return FileResponse(FRONTEND, media_type="text/html")
-    return {"error": "Frontend not found", "expected_path": str(FRONTEND)}
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+   

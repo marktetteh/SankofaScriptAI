@@ -501,18 +501,35 @@ tr:hover .edit-mark-btn{opacity:1;}
 <script>
 const API = '/api';
 
-// Fetch with a 5-minute timeout — prevents "Failed to fetch" on slow PDF processing
-async function fetchWithTimeout(url, options = {}, ms = 300000) {
+// Fetch with an 8-minute timeout — prevents "Failed to fetch" on slow PDF processing
+async function fetchWithTimeout(url, options = {}, ms = 480000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const resp = await fetch(url, { ...options, signal: controller.signal });
     return resp;
   } catch(e) {
-    if (e.name === 'AbortError') throw new Error('Request timed out after 5 minutes — the paper may be too large. Try a smaller file.');
+    if (e.name === 'AbortError') throw new Error('Request timed out after 8 minutes — the paper may be too large. Try a smaller file.');
     throw e;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// Fetch with automatic retry — retries once on network errors (like "Failed to fetch")
+async function fetchWithRetry(url, options = {}, ms = 480000, label = '') {
+  try {
+    return await fetchWithTimeout(url, options, ms);
+  } catch(e) {
+    const isNetwork = e.message.includes('Failed to fetch') ||
+                      e.message.includes('NetworkError') ||
+                      e.message.includes('Load failed');
+    if (isNetwork) {
+      console.warn(`[FETCH] Network error for ${label} — waiting 10s then retrying…`, e.message);
+      await new Promise(r => setTimeout(r, 10000));
+      return await fetchWithTimeout(url, options, ms);
+    }
+    throw e;
   }
 }
 let batchRowCount = 0;
@@ -652,8 +669,15 @@ function renderResult(data, containerId) {
     </tr>${solRow}`;
   }).join('');
 
+  const lowQWarning = (data.questions && data.questions.length > 0 && data.questions.length < 5)
+    ? `<div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:8px;
+                   padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--yellow);">
+         ⚠️ Only ${data.questions.length} question(s) detected. If the paper has more questions, try the Retry button or re-upload a clearer image.
+       </div>` : '';
+
   el.innerHTML = `
     <div class="card" id="${cardId}" style="margin-top:0;">
+      ${lowQWarning}
       <div class="result-hero">
         <div class="grade-badge ${gradeClass(g)}" id="gbadge-${cardId}">${g}</div>
         <div class="hero-info">
@@ -922,7 +946,7 @@ async function markSinglePaper() {
     fd.append('exercise_number', exNum);
     fd.append('file', file);
 
-    const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
+    const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, name);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `Server error ${resp.status}`);
@@ -1060,7 +1084,8 @@ async function markBatch() {
        <strong>${escHtml(name)}</strong><br>
        <span style="font-size:12px;color:#6ee7b7;">
          ✅ ${results.length} done &nbsp;·&nbsp; ❌ ${failed.length} failed so far
-       </span>`;
+       </span><br>
+       <span style="font-size:11px;color:var(--text2);">Auto-retries on network errors. Please wait…</span>`;
 
     try {
       const fd = new FormData();
@@ -1071,12 +1096,16 @@ async function markBatch() {
       fd.append('exercise_number', exNum);
       fd.append('file', file);
 
-      const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
+      const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, name);
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.detail || `Server error ${resp.status}`);
       }
       const data = await resp.json();
+      // Warn if < 5 questions were detected despite marking succeeding
+      if (data.questions && data.questions.length > 0 && data.questions.length < 5) {
+        console.warn(`[BATCH] ${name}: only ${data.questions.length} questions detected — may need retry`);
+      }
       results.push({ ...data, _status: 'ok' });
     } catch(e) {
       console.error(`[BATCH] Failed for ${name}:`, e.message);
@@ -1180,7 +1209,7 @@ async function retryOne(failedIndex) {
     fd.append('assessment_type', assessType);
     fd.append('exercise_number', exNum);
     fd.append('file', entry.file);
-    const resp = await fetchWithTimeout(API + '/mark/paper', { method: 'POST', body: fd });
+    const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, entry.student_name);
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       throw new Error(err.detail || `Server error ${resp.status}`);
@@ -1254,292 +1283,4 @@ async function loadDashboard() {
             <div class="h-grade grade-badge ${gradeClass(g)}" style="width:36px;height:36px;font-size:13px;">${g}</div>
             <div>
               <div class="h-name">${escHtml(s.student_name || '?')}</div>
-              <div class="h-meta">${escHtml(s.class_name)} · ${(s.marked_at||'').slice(0,10)}</div>
-            </div>
-            <div class="h-marks">${s.marks_awarded ?? 0}/${s.max_marks ?? 0}</div>
-          </div>`;
-        }).join('');
-      }
-    }
-
-    // Top grade
-    const analytics = await api('/analytics/' + encodeURIComponent(classes[0].name)).catch(() => null);
-    if (analytics?.grade_distribution) {
-      const order = ['A*','A','B','C','D','E','U'];
-      const top = order.find(g => (analytics.grade_distribution[g] || 0) > 0) || '—';
-      document.getElementById('dTopGrade').textContent = top;
-    }
-  } catch(e) {
-    console.error('Dashboard error:', e);
-  }
-}
-
-// ── History ───────────────────────────────────────────────────────────────
-
-// Assessment type icons and sort order
-const ASSESS_ICON = {
-  'Class Exercise': '📝',
-  'Homework':       '🏠',
-  'Test':           '📋',
-  'Mid-Term Test':  '📊',
-  'Exam':           '🎓',
-};
-const ASSESS_ORDER = ['Class Exercise','Homework','Test','Mid-Term Test','Exam'];
-
-function groupSubmissions(subs) {
-  const map = {};
-  for (const s of subs) {
-    const type = s.assessment_type || 'Class Exercise';
-    const num  = s.exercise_number  || 1;
-    const cls  = s.class_name       || '';
-    const key  = `${type}||${num}||${cls}`;
-    if (!map[key]) map[key] = { type, num, cls, key, subs: [] };
-    map[key].subs.push(s);
-  }
-  return Object.values(map).sort((a, b) => {
-    const oi = ASSESS_ORDER.indexOf(a.type) - ASSESS_ORDER.indexOf(b.type);
-    if (oi !== 0) return oi;
-    if (a.num !== b.num) return a.num - b.num;
-    return a.cls.localeCompare(b.cls);
-  });
-}
-
-function toggleGroup(key) {
-  const el = document.getElementById('ag-' + key);
-  if (el) el.classList.toggle('open');
-}
-
-function toggleStudentFeedback(rowId, hasFb) {
-  if (!hasFb) return;
-  const row = document.getElementById(rowId);
-  if (!row) return;
-  row.classList.toggle('fb-open');
-  // Rotate the chevron
-  const chev = row.querySelector('.fb-chevron-' + rowId);
-  if (chev) chev.style.transform = row.classList.contains('fb-open') ? 'rotate(90deg)' : '';
-}
-
-const FORM_CLASSES = ['Form 3', 'Form 4', 'Form 5'];
-
-async function loadHistory() {
-  const filter = document.getElementById('hClassFilter').value;
-  try {
-    let subs = [];
-    if (filter) {
-      subs = await api('/submissions/' + encodeURIComponent(filter));
-    } else {
-      for (const cls of FORM_CLASSES) {
-        const s = await api('/submissions/' + encodeURIComponent(cls)).catch(() => []);
-        subs = subs.concat(s);
-      }
-    }
-
-    const el = document.getElementById('historyList');
-    if (!subs.length) {
-      el.innerHTML = '<div class="empty">No results yet. Mark some papers to see them here.</div>';
-      return;
-    }
-
-    const groups = groupSubmissions(subs);
-
-    el.innerHTML = groups.map(g => {
-      const safeKey    = g.key.replace(/[^a-z0-9]/gi, '_');
-      const icon       = ASSESS_ICON[g.type] || '📄';
-      const avgPct     = g.subs.length
-        ? Math.round(g.subs.reduce((s,r) => s + (r.percentage||0), 0) / g.subs.length * 10) / 10
-        : 0;
-      const avgColor   = avgPct >= 70 ? 'var(--green)' : avgPct >= 50 ? 'var(--yellow)' : 'var(--red)';
-      const latestDate = g.subs.map(s => s.marked_at||'').sort().reverse()[0] || '';
-      const cls        = g.cls;
-
-      const studentRows = g.subs
-        .sort((a,b) => (b.percentage||0) - (a.percentage||0))
-        .map(s => {
-          const grade    = s.grade || 'U';
-          const pct      = s.percentage ?? 0;
-          const bc       = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
-          const qs       = s.questions || [];
-          const hasFb    = s.overall_feedback || s.teacher_notes || qs.length > 0;
-          const rowId    = 'sr-' + (s.id || Math.random().toString(36).slice(2));
-
-          // Per-question breakdown table
-          const hCardId = 'hcard-' + (s.id || rowId);
-          const hSubId  = s.id || '';
-          const qTableRows = qs.map((q, i) => {
-            const ma = q.marks_awarded  ?? 0;
-            const mx = q.marks_available ?? 0;
-            const qn = q.question_number ?? i+1;
-            const chip = q.amended
-              ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
-              : markChip(ma, mx);
-            return `<tr id="qrow-${hCardId}-${i}">
-              <td style="font-weight:600;color:var(--accent);white-space:nowrap;">Q${qn}</td>
-              <td style="max-width:200px;line-height:1.4;font-size:12px;">${escHtml(q.question_text||'—')}</td>
-              <td style="white-space:nowrap;">
-                <span id="chip-${hCardId}-${i}">${chip}</span>
-                ${hSubId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${hCardId}',${i},'${qn}',${ma},${mx},'${hSubId}')">✏️</button>` : ''}
-              </td>
-              <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback||'')}</td>
-            </tr>`;
-          }).join('');
-
-          const feedbackPanel = hasFb ? `
-            <div class="assess-feedback-panel">
-              ${qs.length ? `
-                <div class="fb-label" style="color:var(--text2);margin-bottom:6px;">📊 Question Breakdown</div>
-                <div style="overflow-x:auto;margin-bottom:8px;">
-                  <table class="q-table" style="font-size:12px;">
-                    <thead><tr>
-                      <th style="width:36px;">#</th>
-                      <th>Question</th>
-                      <th style="width:80px;">Marks</th>
-                      <th>Feedback</th>
-                    </tr></thead>
-                    <tbody>${qTableRows}</tbody>
-                  </table>
-                </div>
-                <div id="amendbar-${hCardId}" style="display:none;" class="amend-bar">
-                  <div class="unsaved-dot"></div>
-                  <span>You have unsaved amendments</span>
-                  <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${hCardId}','${hSubId}')">💾 Save Changes</button>
-                  <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${hCardId}')">Cancel</button>
-                </div>` : ''}
-              ${s.overall_feedback ? `
-                <div class="fb-label" style="color:var(--accent);margin-top:10px;">📋 Student Feedback</div>
-                <div class="fb-text" style="margin-bottom:${s.teacher_notes?'12px':'0'};">${escHtml(s.overall_feedback)}</div>
-              ` : ''}
-              ${s.teacher_notes ? `
-                <div class="fb-label" style="color:var(--yellow);margin-top:4px;">🗒️ Teacher Notes</div>
-                <div class="fb-text" style="color:var(--text2);">${escHtml(s.teacher_notes)}</div>
-              ` : ''}
-            </div>` : '';
-
-          const subId = s.id || '';
-          return `<div class="assess-student-row" id="${rowId}" onclick="toggleStudentFeedback('${rowId}', ${hasFb ? 'true' : 'false'})">
-            <div class="assess-student-main">
-              <div class="grade-badge ${gradeClass(grade)}" style="width:30px;height:30px;font-size:12px;flex-shrink:0;">${grade}</div>
-              <div style="flex:1;min-width:0;">
-                <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(s.student_name||'?')}</div>
-                <div style="font-size:11px;color:var(--text2);">${(s.marked_at||'').slice(0,10)}${hasFb ? ' &nbsp;·&nbsp; <span style="color:var(--accent);">tap to expand</span>' : ''}</div>
-              </div>
-              <div style="text-align:right;flex-shrink:0;">
-                <div style="font-size:13px;font-weight:600;color:var(--accent);">${s.marks_awarded??0}/${s.max_marks??0}</div>
-                <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:2px;">
-                  <span style="font-size:11px;color:var(--text2);">${pct}%</span>
-                  <div class="mini-bar"><div class="mini-fill" style="width:${Math.min(pct,100)}%;background:${bc};"></div></div>
-                </div>
-              </div>
-              ${hasFb ? `<div style="font-size:14px;color:var(--text2);flex-shrink:0;margin-left:4px;" class="fb-chevron-${rowId}">›</div>` : ''}
-              <button class="del-btn" title="Delete this result" onclick="event.stopPropagation(); deleteSubmission('${subId}', '${rowId}', '${escHtml(s.student_name||'Student')}')">🗑</button>
-            </div>
-            ${feedbackPanel}
-          </div>`;
-        }).join('');
-
-      const gradeCount = {};
-      g.subs.forEach(s => { const gr = s.grade||'U'; gradeCount[gr]=(gradeCount[gr]||0)+1; });
-      const gradeSummary = ['A*','A','B','C','D','E','U']
-        .filter(gr => gradeCount[gr])
-        .map(gr => `<span style="font-size:11px;color:${gradeColor(gr)};font-weight:600;">${gr}:${gradeCount[gr]}</span>`)
-        .join(' ');
-
-      return `
-        <div class="assess-group" id="ag-${safeKey}">
-          <div class="assess-group-header" onclick="toggleGroup('${safeKey}')">
-            <div class="assess-icon">${icon}</div>
-            <div class="assess-title">
-              <strong>${escHtml(g.type)} ${g.num}</strong>
-              <span style="display:flex;align-items:center;gap:8px;margin-top:2px;">
-                <span style="background:rgba(96,165,250,0.15);color:var(--blue);padding:1px 8px;border-radius:20px;font-size:11px;font-weight:600;">${escHtml(cls)}</span>
-                <span>${latestDate.slice(0,10)} · ${g.subs.length} student${g.subs.length!==1?'s':''}</span>
-              </span>
-            </div>
-            <div class="assess-stats">
-              <div>
-                <div class="assess-avg" style="color:${avgColor};">${avgPct}%</div>
-                <div class="assess-count">class avg</div>
-              </div>
-              <div style="font-size:11px;line-height:1.8;">${gradeSummary}</div>
-            </div>
-            <div class="assess-chevron">›</div>
-          </div>
-          <div class="assess-body">
-            ${studentRows}
-            <div class="assess-footer">
-              <button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export-exercise?assessment_type=${encodeURIComponent(g.type)}&exercise_number=${g.num}&class_name=${encodeURIComponent(cls)}')">
-                ⬇ Export ${escHtml(g.type)} ${g.num} — ${escHtml(cls)}
-              </button>
-              <button class="btn btn-danger btn-sm" style="margin-left:auto;" onclick="deleteGroup('${escHtml(g.type)}', ${g.num}, '${escHtml(cls)}', '${safeKey}')">
-                🗑 Delete Group
-              </button>
-            </div>
-          </div>
-        </div>`;
-    }).join('');
-
-  } catch(e) {
-    console.error('History error:', e);
-    document.getElementById('historyList').innerHTML =
-      `<div class="empty">Error loading history.</div>`;
-  }
-}
-
-async function deleteSubmission(subId, rowId, studentName) {
-  if (!subId) { toast('Cannot delete — no ID found', 'err'); return; }
-  if (!confirm(`Delete ${studentName}'s result? This cannot be undone.`)) return;
-  try {
-    await fetch(`${API}/submissions/${subId}`, { method: 'DELETE' });
-    // Fade out and remove the row
-    const row = document.getElementById(rowId);
-    if (row) {
-      row.style.transition = 'opacity 0.3s, max-height 0.3s';
-      row.style.opacity = '0';
-      row.style.overflow = 'hidden';
-      row.style.maxHeight = row.offsetHeight + 'px';
-      setTimeout(() => { row.style.maxHeight = '0'; row.style.padding = '0'; }, 50);
-      setTimeout(() => row.remove(), 350);
-    }
-    toast(`${studentName}'s result deleted`, 'ok');
-  } catch(e) {
-    toast('Delete failed: ' + e.message, 'err');
-  }
-}
-
-async function deleteGroup(assessType, exerciseNum, cls, safeKey) {
-  if (!confirm(`Delete ALL results for ${assessType} ${exerciseNum} — ${cls}?\n\nThis will permanently remove every student's result in this group.`)) return;
-  try {
-    const url = `${API}/submissions/group/${encodeURIComponent(assessType)}/${exerciseNum}/${encodeURIComponent(cls)}`;
-    await fetch(url, { method: 'DELETE' });
-    // Remove the entire group card
-    const card = document.getElementById('ag-' + safeKey);
-    if (card) {
-      card.style.transition = 'opacity 0.3s, max-height 0.4s';
-      card.style.opacity = '0';
-      card.style.overflow = 'hidden';
-      card.style.maxHeight = card.offsetHeight + 'px';
-      setTimeout(() => { card.style.maxHeight = '0'; card.style.marginBottom = '0'; }, 50);
-      setTimeout(() => card.remove(), 400);
-    }
-    toast(`${assessType} ${exerciseNum} — ${cls} deleted`, 'ok');
-  } catch(e) {
-    toast('Delete failed: ' + e.message, 'err');
-  }
-}
-
-function exportClass() {
-  const cls = document.getElementById('hClassFilter').value;
-  if (!cls) { toast('Select a class to export, or use the Export button on each exercise group below', 'info'); return; }
-  window.open(API + '/export/' + encodeURIComponent(cls));
-}
-
-// ── Init ──────────────────────────────────────────────────────────────────
-
-// Start with 3 batch rows
-addBatchRow(); addBatchRow(); addBatchRow();
-
-checkHealth();
-setInterval(checkHealth, 30000);
-loadDashboard();
-</script>
-</body>
-</html>
+              <div class="h-meta">${escHtml(s.class_nam
