@@ -274,23 +274,83 @@ tr:hover .edit-mark-btn{opacity:1;}
 
   <!-- DASHBOARD -->
   <div class="page active" id="page-dashboard">
-    <div class="page-header">
-      <h2>Dashboard</h2>
-      <p>Overview of your marking activity</p>
-    </div>
-    <div class="stats-grid" id="dashStats">
-      <div class="stat-card"><div class="stat-value" id="dTotalPapers">—</div><div class="stat-label">Papers Marked</div></div>
-      <div class="stat-card"><div class="stat-value" id="dAvgScore">—</div><div class="stat-label">Avg Score</div></div>
-      <div class="stat-card"><div class="stat-value" id="dClasses">—</div><div class="stat-label">Classes</div></div>
-      <div class="stat-card"><div class="stat-value" id="dTopGrade">—</div><div class="stat-label">Top Grade</div></div>
+
+    <!-- Hero welcome -->
+    <div style="background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(192,132,252,0.1));border:1px solid rgba(108,99,255,0.25);border-radius:14px;padding:28px 32px;margin-bottom:28px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <div style="font-size:22px;font-weight:800;margin-bottom:6px;">Welcome to SankofahScriptAI</div>
+        <div style="font-size:14px;color:var(--text2);line-height:1.7;margin-bottom:18px;">Upload a student's answer paper and Gemma will read the questions, mark the answers, and give detailed feedback — all in under 60 seconds.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="showPage('mark')" style="font-size:14px;padding:11px 22px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13l2 2 4-4"/></svg>
+            Mark a Paper
+          </button>
+          <button class="btn btn-secondary" onclick="showPage('batch')" style="font-size:14px;padding:11px 22px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+            Batch Mark Class
+          </button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;flex-shrink:0;">
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--accent);" id="dTotalPapers">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Papers</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--green);" id="dAvgScore">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Avg Score</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--purple);" id="dClasses">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Classes</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--yellow);" id="dTopGrade">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Top Grade</div>
+        </div>
+      </div>
     </div>
 
-    <div class="card">
+    <!-- How it works (shown when no data) -->
+    <div id="howItWorks" class="card" style="display:none;">
       <div class="card-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Recent Results
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Getting Started — 3 Easy Steps
       </div>
-      <div id="dashRecent"><div class="empty">No papers marked yet. Upload a paper to get started.</div></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">📷</div>
+          <div style="font-weight:600;margin-bottom:4px;">1. Upload the paper</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">Take a photo or scan the student's answer sheet. JPG, PNG, or PDF all work.</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">🤖</div>
+          <div style="font-weight:600;margin-bottom:4px;">2. Gemma marks it</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">The AI reads printed questions and handwritten answers, then applies Cambridge M/A/B mark conventions.</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">✏️</div>
+          <div style="font-weight:600;margin-bottom:4px;">3. Review &amp; adjust</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">See per-question marks, worked solutions, and student feedback. Amend any marks with one click.</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;text-align:center;">
+        <button class="btn btn-primary" onclick="showPage('mark')" style="font-size:14px;padding:11px 28px;">
+          Mark your first paper →
+        </button>
+      </div>
+    </div>
+
+    <!-- Recent results -->
+    <div class="card" id="recentCard">
+      <div class="card-title" style="justify-content:space-between;">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Recent Results
+        </span>
+        <button class="btn btn-secondary btn-sm" onclick="showPage('history')">View All →</button>
+      </div>
+      <div id="dashRecent"><div class="empty">No papers marked yet. Click "Mark a Paper" above to get started.</div></div>
     </div>
 
     <div class="card" id="classCard" style="display:none;">
@@ -1239,26 +1299,34 @@ async function retryAllFailed() {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
 
+const FORM_CLASSES = ['Form 3', 'Form 4', 'Form 5'];
+
 async function loadDashboard() {
   try {
     const classes = await api('/classes');
+
     if (!classes.length) {
       document.getElementById('dTotalPapers').textContent = '0';
       document.getElementById('dAvgScore').textContent = '—';
       document.getElementById('dClasses').textContent = '0';
+      document.getElementById('dTopGrade').textContent = '—';
+      document.getElementById('howItWorks').style.display = 'block';
       return;
     }
 
-    const total = classes.reduce((s, c) => s + (c.submission_count || 0), 0);
-    const avgPct = classes.filter(c => c.avg_percentage).length
-      ? Math.round(classes.reduce((s,c) => s + (c.avg_percentage||0), 0) / classes.length * 10) / 10
+    document.getElementById('howItWorks').style.display = 'none';
+
+    const total  = classes.reduce((s, c) => s + (c.submission_count || 0), 0);
+    const active = classes.filter(c => c.avg_percentage != null);
+    const avgPct = active.length
+      ? Math.round(active.reduce((s,c) => s + (c.avg_percentage||0), 0) / active.length * 10) / 10
       : 0;
 
     document.getElementById('dTotalPapers').textContent = total;
-    document.getElementById('dAvgScore').textContent = avgPct ? `${avgPct}%` : '—';
-    document.getElementById('dClasses').textContent = classes.length;
+    document.getElementById('dAvgScore').textContent    = avgPct ? `${avgPct}%` : '—';
+    document.getElementById('dClasses').textContent     = classes.length;
 
-    // Class table
+    // Class averages table
     const classCard = document.getElementById('classCard');
     classCard.style.display = 'block';
     document.getElementById('classTable').innerHTML = `
@@ -1272,15 +1340,307 @@ async function loadDashboard() {
         </tr>`).join('')}</tbody>
       </table>`;
 
-    // Recent results (load from first class)
-    if (classes[0]) {
-      const subs = await api('/submissions/' + encodeURIComponent(classes[0].name));
-      const recent = subs.slice(0, 8);
-      if (recent.length) {
-        document.getElementById('dashRecent').innerHTML = recent.map(s => {
-          const g = s.grade || 'U';
-          return `<div class="history-row" onclick="">
-            <div class="h-grade grade-badge ${gradeClass(g)}" style="width:36px;height:36px;font-size:13px;">${g}</div>
-            <div>
-              <div class="h-name">${escHtml(s.student_name || '?')}</div>
-              <div class="h-meta">${escHtml(s.class_nam
+    // Recent results across all classes
+    let allSubs = [];
+    for (const c of classes) {
+      const s = await api('/submissions/' + encodeURIComponent(c.name)).catch(() => []);
+      allSubs = allSubs.concat(s);
+    }
+    allSubs.sort((a, b) => (b.marked_at||'').localeCompare(a.marked_at||''));
+    const recent = allSubs.slice(0, 10);
+
+    // Top grade from all submissions
+    const gradePriority = {'A*':7,'A':6,'B':5,'C':4,'D':3,'E':2,'U':1};
+    const topGrade = allSubs.reduce((best, s) => {
+      return (gradePriority[s.grade]||0) > (gradePriority[best]||0) ? s.grade : best;
+    }, 'U');
+    document.getElementById('dTopGrade').textContent = topGrade;
+
+    if (recent.length) {
+      document.getElementById('dashRecent').innerHTML = recent.map(s => {
+        const g = s.grade || 'U';
+        const pct = s.percentage ?? 0;
+        const barColor = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+        return `<div class="history-row" style="cursor:default;">
+          <div class="h-grade grade-badge ${gradeClass(g)}" style="width:36px;height:36px;font-size:13px;">${g}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="h-name">${escHtml(s.student_name || '?')}</div>
+            <div class="h-meta">${escHtml(s.class_name||'')} · ${(s.marked_at||'').slice(0,10)}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div class="h-marks">${s.marks_awarded??0}/${s.max_marks??0}</div>
+            <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:3px;">
+              <span style="font-size:11px;color:var(--text2);">${pct}%</span>
+              <div style="width:60px;height:4px;border-radius:3px;background:var(--surface2);overflow:hidden;">
+                <div style="height:100%;border-radius:3px;width:${Math.min(pct,100)}%;background:${barColor};"></div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) {
+    console.error('Dashboard error:', e);
+    document.getElementById('howItWorks').style.display = 'block';
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+
+const ASSESS_ICON = {
+  'Class Exercise': '📝',
+  'Homework':       '🏠',
+  'Test':           '📋',
+  'Mid-Term Test':  '📊',
+  'Exam':           '🎓',
+};
+const ASSESS_ORDER = ['Class Exercise','Homework','Test','Mid-Term Test','Exam'];
+
+function groupSubmissions(subs) {
+  const map = {};
+  for (const s of subs) {
+    const type = s.assessment_type || 'Class Exercise';
+    const num  = s.exercise_number  || 1;
+    const cls  = s.class_name       || '';
+    const key  = `${type}||${num}||${cls}`;
+    if (!map[key]) map[key] = { type, num, cls, key, subs: [] };
+    map[key].subs.push(s);
+  }
+  return Object.values(map).sort((a, b) => {
+    const oi = ASSESS_ORDER.indexOf(a.type) - ASSESS_ORDER.indexOf(b.type);
+    if (oi !== 0) return oi;
+    if (a.num !== b.num) return a.num - b.num;
+    return a.cls.localeCompare(b.cls);
+  });
+}
+
+function toggleGroup(key) {
+  const el = document.getElementById('ag-' + key);
+  if (el) el.classList.toggle('open');
+}
+
+function toggleStudentFeedback(rowId, hasFb) {
+  if (!hasFb) return;
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  row.classList.toggle('fb-open');
+  const chev = row.querySelector('.fb-chevron-' + rowId);
+  if (chev) chev.style.transform = row.classList.contains('fb-open') ? 'rotate(90deg)' : '';
+}
+
+async function loadHistory() {
+  const filter = document.getElementById('hClassFilter').value;
+  try {
+    let subs = [];
+    if (filter) {
+      subs = await api('/submissions/' + encodeURIComponent(filter));
+    } else {
+      for (const cls of FORM_CLASSES) {
+        const s = await api('/submissions/' + encodeURIComponent(cls)).catch(() => []);
+        subs = subs.concat(s);
+      }
+    }
+
+    const el = document.getElementById('historyList');
+    if (!subs.length) {
+      el.innerHTML = '<div class="empty">No results yet. Mark some papers to see them here.</div>';
+      return;
+    }
+
+    const groups = groupSubmissions(subs);
+
+    el.innerHTML = groups.map(g => {
+      const safeKey  = g.key.replace(/[^a-z0-9]/gi, '_');
+      const icon     = ASSESS_ICON[g.type] || '📄';
+      const avgPct   = g.subs.length
+        ? Math.round(g.subs.reduce((s,r) => s + (r.percentage||0), 0) / g.subs.length * 10) / 10
+        : 0;
+      const avgColor   = avgPct >= 70 ? 'var(--green)' : avgPct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      const latestDate = g.subs.map(s => s.marked_at||'').sort().reverse()[0] || '';
+      const cls        = g.cls;
+
+      const gradeCount = {};
+      g.subs.forEach(s => { const gr = s.grade||'U'; gradeCount[gr]=(gradeCount[gr]||0)+1; });
+      const gradeSummary = ['A*','A','B','C','D','E','U']
+        .filter(gr => gradeCount[gr])
+        .map(gr => `<span style="font-size:11px;color:${gradeColor(gr)};font-weight:600;">${gr}:${gradeCount[gr]}</span>`)
+        .join(' ');
+
+      const studentRows = g.subs
+        .sort((a,b) => (b.percentage||0) - (a.percentage||0))
+        .map(s => {
+          const grade = s.grade || 'U';
+          const pct   = s.percentage ?? 0;
+          const bc    = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+          const qs    = s.questions || [];
+          const hasFb = s.overall_feedback || s.teacher_notes || qs.length > 0;
+          const rowId = 'sr-' + (s.id || Math.random().toString(36).slice(2));
+
+          const hCardId = 'hcard-' + (s.id || rowId);
+          const hSubId  = s.id || '';
+          const qTableRows = qs.map((q, i) => {
+            const ma = q.marks_awarded  ?? 0;
+            const mx = q.marks_available ?? 0;
+            const qn = q.question_number ?? i+1;
+            const chip = q.amended
+              ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+              : markChip(ma, mx);
+            return `<tr id="qrow-${hCardId}-${i}">
+              <td style="font-weight:600;color:var(--accent);white-space:nowrap;">Q${qn}</td>
+              <td style="max-width:200px;line-height:1.4;font-size:12px;">${escHtml(q.question_text||'—')}</td>
+              <td style="white-space:nowrap;">
+                <span id="chip-${hCardId}-${i}">${chip}</span>
+                ${hSubId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${hCardId}',${i},'${qn}',${ma},${mx},'${hSubId}')">✏️</button>` : ''}
+              </td>
+              <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback||'')}</td>
+            </tr>`;
+          }).join('');
+
+          const feedbackPanel = hasFb ? `
+            <div class="assess-feedback-panel">
+              ${qs.length ? `
+                <div class="fb-label" style="color:var(--text2);margin-bottom:6px;">📊 Question Breakdown</div>
+                <div style="overflow-x:auto;margin-bottom:8px;">
+                  <table class="q-table" style="font-size:12px;">
+                    <thead><tr>
+                      <th style="width:36px;">#</th>
+                      <th>Question</th>
+                      <th style="width:80px;">Marks</th>
+                      <th>Feedback</th>
+                    </tr></thead>
+                    <tbody>${qTableRows}</tbody>
+                  </table>
+                </div>
+                <div id="amendbar-${hCardId}" style="display:none;" class="amend-bar">
+                  <div class="unsaved-dot"></div>
+                  <span>You have unsaved amendments</span>
+                  <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${hCardId}','${hSubId}')">💾 Save Changes</button>
+                  <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${hCardId}')">Cancel</button>
+                </div>` : ''}
+              ${s.overall_feedback ? `
+                <div class="fb-label" style="color:var(--accent);margin-top:10px;">📋 Student Feedback</div>
+                <div class="fb-text" style="margin-bottom:${s.teacher_notes?'12px':'0'};">${escHtml(s.overall_feedback)}</div>` : ''}
+              ${s.teacher_notes ? `
+                <div class="fb-label" style="color:var(--yellow);margin-top:4px;">🗒️ Teacher Notes</div>
+                <div class="fb-text" style="color:var(--text2);">${escHtml(s.teacher_notes)}</div>` : ''}
+            </div>` : '';
+
+          const subId = s.id || '';
+          return `<div class="assess-student-row" id="${rowId}" onclick="toggleStudentFeedback('${rowId}', ${hasFb ? 'true' : 'false'})">
+            <div class="assess-student-main">
+              <div class="grade-badge ${gradeClass(grade)}" style="width:30px;height:30px;font-size:12px;flex-shrink:0;">${grade}</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(s.student_name||'?')}</div>
+                <div style="font-size:11px;color:var(--text2);">${(s.marked_at||'').slice(0,10)}${hasFb ? ' &nbsp;·&nbsp; <span style="color:var(--accent);">tap to expand</span>' : ''}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0;">
+                <div style="font-size:13px;font-weight:600;color:var(--accent);">${s.marks_awarded??0}/${s.max_marks??0}</div>
+                <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:2px;">
+                  <span style="font-size:11px;color:var(--text2);">${pct}%</span>
+                  <div class="mini-bar"><div class="mini-fill" style="width:${Math.min(pct,100)}%;background:${bc};"></div></div>
+                </div>
+              </div>
+              ${hasFb ? `<div style="font-size:14px;color:var(--text2);flex-shrink:0;margin-left:4px;" class="fb-chevron-${rowId}">›</div>` : ''}
+              <button class="del-btn" title="Delete this result" onclick="event.stopPropagation(); deleteSubmission('${subId}', '${rowId}', '${escHtml(s.student_name||'Student')}')">🗑</button>
+            </div>
+            ${feedbackPanel}
+          </div>`;
+        }).join('');
+
+      return `
+        <div class="assess-group" id="ag-${safeKey}">
+          <div class="assess-group-header" onclick="toggleGroup('${safeKey}')">
+            <div class="assess-icon">${icon}</div>
+            <div class="assess-title">
+              <strong>${escHtml(g.type)} ${g.num}</strong>
+              <span style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                <span style="background:rgba(96,165,250,0.15);color:var(--blue);padding:1px 8px;border-radius:20px;font-size:11px;font-weight:600;">${escHtml(cls)}</span>
+                <span>${latestDate.slice(0,10)} · ${g.subs.length} student${g.subs.length!==1?'s':''}</span>
+              </span>
+            </div>
+            <div class="assess-stats">
+              <div>
+                <div class="assess-avg" style="color:${avgColor};">${avgPct}%</div>
+                <div class="assess-count">class avg</div>
+              </div>
+              <div style="font-size:11px;line-height:1.8;">${gradeSummary}</div>
+            </div>
+            <div class="assess-chevron">›</div>
+          </div>
+          <div class="assess-body">
+            ${studentRows}
+            <div class="assess-footer">
+              <button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export-exercise?assessment_type=${encodeURIComponent(g.type)}&exercise_number=${g.num}&class_name=${encodeURIComponent(cls)}')">
+                ⬇ Export ${escHtml(g.type)} ${g.num} — ${escHtml(cls)}
+              </button>
+              <button class="btn btn-danger btn-sm" style="margin-left:auto;" onclick="deleteGroup('${escHtml(g.type)}', ${g.num}, '${escHtml(cls)}', '${safeKey}')">
+                🗑 Delete Group
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('History error:', e);
+    document.getElementById('historyList').innerHTML =
+      `<div class="empty">Error loading history.</div>`;
+  }
+}
+
+async function deleteSubmission(subId, rowId, studentName) {
+  if (!subId) { toast('Cannot delete — no ID found', 'err'); return; }
+  if (!confirm(`Delete ${studentName}'s result? This cannot be undone.`)) return;
+  try {
+    await fetch(`${API}/submissions/${subId}`, { method: 'DELETE' });
+    const row = document.getElementById(rowId);
+    if (row) {
+      row.style.transition = 'opacity 0.3s, max-height 0.3s';
+      row.style.opacity = '0';
+      row.style.overflow = 'hidden';
+      row.style.maxHeight = row.offsetHeight + 'px';
+      setTimeout(() => { row.style.maxHeight = '0'; row.style.padding = '0'; }, 50);
+      setTimeout(() => row.remove(), 350);
+    }
+    toast(`${studentName}'s result deleted`, 'ok');
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'err');
+  }
+}
+
+async function deleteGroup(assessType, exerciseNum, cls, safeKey) {
+  if (!confirm(`Delete ALL results for ${assessType} ${exerciseNum} — ${cls}?\n\nThis will permanently remove every student's result in this group.`)) return;
+  try {
+    const url = `${API}/submissions/group/${encodeURIComponent(assessType)}/${exerciseNum}/${encodeURIComponent(cls)}`;
+    await fetch(url, { method: 'DELETE' });
+    const card = document.getElementById('ag-' + safeKey);
+    if (card) {
+      card.style.transition = 'opacity 0.3s, max-height 0.4s';
+      card.style.opacity = '0';
+      card.style.overflow = 'hidden';
+      card.style.maxHeight = card.offsetHeight + 'px';
+      setTimeout(() => { card.style.maxHeight = '0'; card.style.marginBottom = '0'; }, 50);
+      setTimeout(() => card.remove(), 400);
+    }
+    toast(`${assessType} ${exerciseNum} — ${cls} deleted`, 'ok');
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'err');
+  }
+}
+
+function exportClass() {
+  const cls = document.getElementById('hClassFilter').value;
+  if (!cls) { toast('Select a class to export, or use the Export button on each exercise group below', 'info'); return; }
+  window.open(API + '/export/' + encodeURIComponent(cls));
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+addBatchRow(); addBatchRow(); addBatchRow();
+
+checkHealth();
+setInterval(checkHealth, 30000);
+loadDashboard();
+</script>
+</body>
+</html>

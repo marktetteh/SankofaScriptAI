@@ -16,26 +16,41 @@ if %errorlevel% neq 0 (
     pause & exit /b 1
 )
 
-:: ── STEP 2: API Key — save to backend\.env on first run ──────────────────────
+:: ── STEP 2: First-run setup — save credentials to backend\.env ───────────────
 if not exist "backend\.env" (
-    echo  [SETUP] First time setup - enter your Google API key.
-    echo          Get one free at: https://aistudio.google.com/apikey
+    echo  [SETUP] First time setup
     echo.
-    set /p APIKEY="  Paste your Google API key here: "
-    echo GOOGLE_API_KEY=!APIKEY!> backend\.env
+    echo  1. Google API key — get one free at: https://aistudio.google.com/apikey
+    set /p APIKEY="     Paste your Google API key: "
     echo.
-    echo  [OK] Key saved to backend\.env
+    echo  2. PostgreSQL connection string
+    echo     Local example:  postgresql://postgres:password@localhost:5432/sankofascript
+    echo     Render / Neon:  postgresql://user:pass@host/dbname?sslmode=require
+    set /p DBURL="     Paste your DATABASE_URL: "
+    (
+        echo GOOGLE_API_KEY=!APIKEY!
+        echo DATABASE_URL=!DBURL!
+    ) > backend\.env
+    echo.
+    echo  [OK] Credentials saved to backend\.env
     echo.
 )
 
-:: Load GOOGLE_API_KEY from backend\.env into this session
+:: Load variables from backend\.env into this session
 for /f "usebackq tokens=1,* delims==" %%A in ("backend\.env") do (
     if "%%A"=="GOOGLE_API_KEY" set GOOGLE_API_KEY=%%B
+    if "%%A"=="DATABASE_URL"   set DATABASE_URL=%%B
 )
 
 if "!GOOGLE_API_KEY!"=="" (
     echo  [ERROR] GOOGLE_API_KEY is empty in backend\.env
     echo          Open backend\.env and paste your key after the = sign.
+    pause & exit /b 1
+)
+
+if "!DATABASE_URL!"=="" (
+    echo  [ERROR] DATABASE_URL is empty in backend\.env
+    echo          Open backend\.env and add: DATABASE_URL=postgresql://...
     pause & exit /b 1
 )
 

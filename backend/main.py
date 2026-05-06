@@ -5,10 +5,13 @@ Gemma reads the printed questions AND the student's handwritten answers,
 separates them, and marks each question using Cambridge conventions.
 """
 
-import os, json, sqlite3, base64, uuid, csv, io
+import os, json, base64, uuid, csv, io
 from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 try:
     from pypdf import PdfReader, PdfWriter
@@ -16,6 +19,8 @@ try:
 except ImportError:
     PYPDF_OK = False
 
+import psycopg2
+import psycopg2.extras
 import httpx
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +31,7 @@ from pathlib import Path
 
 OLLAMA_BASE    = os.getenv("OLLAMA_BASE",    "http://localhost:11434")
 GEMMA_MODEL    = os.getenv("GEMMA_MODEL",    "gemma:2b")
-DB_PATH        = os.getenv("DB_PATH",        "grademate.db")
+DATABASE_URL   = os.getenv("DATABASE_URL",   "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GOOGLE_MODEL   = os.getenv("GOOGLE_MODEL",   "gemma-4-31b-it")
 GOOGLE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -35,44 +40,62 @@ USE_GOOGLE     = bool(GOOGLE_API_KEY)
 # ── Database ──────────────────────────────────────────────────────────────────
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
+    # If the URL already contains sslmode, psycopg2 picks it up from the DSN.
+    # If not (e.g. local dev without SSL), we fall back to prefer so local
+    # connections without a certificate still work.
+    dsn = DATABASE_URL
+    if "sslmode" not in dsn:
+        dsn += ("&" if "?" in dsn else "?") + "sslmode=prefer"
+    conn = psycopg2.connect(dsn)
+    conn.autocommit = False
     return conn
+
+def _row_to_dict(cursor, row):
+    cols = [d[0] for d in cursor.description]
+    return dict(zip(cols, row))
+
+def _fetchall_dicts(cursor):
+    return [_row_to_dict(cursor, r) for r in cursor.fetchall()]
+
+def _fetchone_dict(cursor):
+    row = cursor.fetchone()
+    return _row_to_dict(cursor, row) if row else None
 
 def init_db():
     conn = get_db()
-    # Create tables if they don't exist
-    conn.executescript("""
+    cur  = conn.cursor()
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id         TEXT PRIMARY KEY,
             name       TEXT NOT NULL,
             class_name TEXT NOT NULL
-        );
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS submissions (
-            id                TEXT PRIMARY KEY,
-            student_id        TEXT,
-            class_name        TEXT NOT NULL,
-            paper_type        TEXT,
-            assessment_type   TEXT DEFAULT 'Class Exercise',
-            exercise_number   INTEGER DEFAULT 1,
-            marks_awarded     REAL DEFAULT 0,
-            max_marks         REAL DEFAULT 0,
-            percentage        REAL DEFAULT 0,
-            grade             TEXT DEFAULT 'U',
-            questions_data    TEXT DEFAULT '[]',
-            overall_feedback  TEXT DEFAULT '',
-            teacher_notes     TEXT DEFAULT '',
-            marked_at         TEXT DEFAULT (datetime('now'))
-        );
+            id               TEXT PRIMARY KEY,
+            student_id       TEXT,
+            class_name       TEXT NOT NULL,
+            paper_type       TEXT DEFAULT '',
+            assessment_type  TEXT DEFAULT 'Class Exercise',
+            exercise_number  INTEGER DEFAULT 1,
+            marks_awarded    REAL DEFAULT 0,
+            max_marks        REAL DEFAULT 0,
+            percentage       REAL DEFAULT 0,
+            grade            TEXT DEFAULT 'U',
+            questions_data   TEXT DEFAULT '[]',
+            overall_feedback TEXT DEFAULT '',
+            teacher_notes    TEXT DEFAULT '',
+            marked_at        TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI'))
+        )
+    """)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS classes (
             id   TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE
-        );
+        )
     """)
-    # Migrate: add any missing columns to existing submissions table
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(submissions)").fetchall()}
+    # Add any missing columns (safe to run on each startup)
     migrations = {
         "paper_type":       "TEXT DEFAULT ''",
         "assessment_type":  "TEXT DEFAULT 'Class Exercise'",
@@ -85,29 +108,36 @@ def init_db():
         "percentage":       "REAL DEFAULT 0",
         "grade":            "TEXT DEFAULT 'U'",
     }
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'submissions'
+    """)
+    existing = {r[0] for r in cur.fetchall()}
     for col, definition in migrations.items():
         if col not in existing:
-            conn.execute(f"ALTER TABLE submissions ADD COLUMN {col} {definition}")
+            cur.execute(f"ALTER TABLE submissions ADD COLUMN {col} {definition}")
             print(f"[DB] Migrated: added column '{col}' to submissions")
     conn.commit()
+    cur.close()
     conn.close()
 
 def save_submission(conn, student_name, class_name, result,
                     assessment_type="Class Exercise", exercise_number=1):
     sid     = str(uuid.uuid4())[:8]
     stud_id = str(uuid.uuid4())[:8]
-    conn.execute(
-        "INSERT OR IGNORE INTO students (id, name, class_name) VALUES (?,?,?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO students (id, name, class_name) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
         (stud_id, student_name, class_name))
-    conn.execute(
-        "INSERT OR IGNORE INTO classes (id, name) VALUES (?,?)",
+    cur.execute(
+        "INSERT INTO classes (id, name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
         (str(uuid.uuid4())[:8], class_name))
-    conn.execute("""
+    cur.execute("""
         INSERT INTO submissions
           (id, student_id, class_name, paper_type, assessment_type, exercise_number,
            marks_awarded, max_marks, percentage, grade,
            questions_data, overall_feedback, teacher_notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
         (sid, stud_id, class_name,
          result.get("paper_type", "Unknown"),
          assessment_type,
@@ -119,6 +149,7 @@ def save_submission(conn, student_name, class_name, result,
          json.dumps(result.get("questions", [])),
          result.get("overall_feedback", ""),
          result.get("teacher_notes", "")))
+    cur.close()
     return sid
 
 # ── AI Callers ────────────────────────────────────────────────────────────────
@@ -985,4 +1016,366 @@ async def test_ai():
     """Test the AI connection with a simple text-only prompt. Use this to diagnose issues."""
     if not GOOGLE_API_KEY:
         return {"ok": False, "error": "GOOGLE_API_KEY is not set in backend/.env"}
-   
+    try:
+        parts = [{"text": "Reply with exactly this JSON and nothing else: {\"ok\": true, \"message\": \"AI connection working\"}"}]
+        gen   = {"temperature": 0, "maxOutputTokens": 64, "responseMimeType": "application/json"}
+        url   = f"{GOOGLE_API_URL}/{GOOGLE_MODEL}:generateContent?key={GOOGLE_API_KEY}"
+        payload = {"contents": [{"parts": parts}], "generationConfig": gen}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            return {"ok": False, "http_status": resp.status_code, "error": resp.text[:600]}
+        data  = resp.json()
+        cands = data.get("candidates", [])
+        if not cands:
+            return {"ok": False, "error": "No candidates returned", "raw": json.dumps(data)[:400]}
+        text = "".join(p.get("text","") for p in cands[0].get("content",{}).get("parts",[])).strip()
+        finish = cands[0].get("finishReason","?")
+        return {"ok": True, "model": GOOGLE_MODEL, "finish_reason": finish, "response": text}
+    except Exception as ex:
+        return {"ok": False, "error": str(ex)}
+
+
+@app.post("/api/mark/paper")
+async def mark_paper(
+    student_name:     str        = Form(...),
+    class_name:       str        = Form(...),
+    paper_type:       str        = Form("Auto-detect"),
+    assessment_type:  str        = Form("Class Exercise"),
+    exercise_number:  int        = Form(1),
+    file:             UploadFile = File(...),
+):
+    """Mark a single student's answer paper (photo or PDF)."""
+    raw_bytes = await file.read()
+    mime      = mime_for(file.filename)
+    file_b64  = base64.b64encode(raw_bytes).decode()
+    prompt    = paper_prompt(paper_type)
+
+    size_kb = len(raw_bytes) // 1024
+    print(f"\n[MARK] {student_name} | {class_name} | {assessment_type} #{exercise_number} | {file.filename} ({mime}) | {size_kb}KB")
+    if size_kb < 150 and mime != "application/pdf":
+        print(f"[MARK] WARNING: image is only {size_kb}KB — low resolution may reduce accuracy.")
+
+    if mime == "application/pdf":
+        result = await mark_pdf_chunked(raw_bytes, paper_type)
+    else:
+        parsed = await _mark_image_with_retry(prompt, file_b64, mime)
+        result = finalise(parsed)
+
+    result["assessment_type"]  = assessment_type
+    result["exercise_number"]  = exercise_number
+    result["marked_at"]        = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    conn = get_db()
+    try:
+        sub_id = save_submission(conn, student_name, class_name, result,
+                                 assessment_type, exercise_number)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"submission_id": sub_id, "student_name": student_name, **result}
+
+
+@app.post("/api/mark/batch")
+async def mark_batch(
+    class_name:       str              = Form(...),
+    paper_type:       str              = Form("Auto-detect"),
+    assessment_type:  str              = Form("Class Exercise"),
+    exercise_number:  int              = Form(1),
+    student_names:    str              = Form(...),
+    files:            List[UploadFile] = File(...),
+):
+    """Mark multiple students' papers in one request."""
+    try:
+        names = json.loads(student_names)
+    except Exception:
+        names = []
+
+    results = []
+    prompt  = paper_prompt(paper_type)
+
+    for i, file in enumerate(files):
+        student_name = names[i] if i < len(names) else f"Student {i + 1}"
+        raw_bytes    = await file.read()
+        mime         = mime_for(file.filename)
+        file_b64     = base64.b64encode(raw_bytes).decode()
+
+        print(f"\n[BATCH {i+1}/{len(files)}] {student_name} | {file.filename}")
+        try:
+            raw    = await call_ai(prompt, file_b64, mime)
+            result = parse_json(raw)
+            result = finalise(result)
+        except Exception as ex:
+            print(f"[BATCH] Error for {student_name}: {ex}")
+            result = {
+                "paper_type": "Unknown", "total_marks_available": 0,
+                "total_marks_awarded": 0, "percentage": 0, "grade": "U",
+                "questions": [], "overall_feedback": f"Error: {ex}",
+                "teacher_notes": "Could not process this paper."
+            }
+
+        result["assessment_type"] = assessment_type
+        result["exercise_number"] = exercise_number
+        result["marked_at"]       = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        conn = get_db()
+        try:
+            sub_id = save_submission(conn, student_name, class_name, result,
+                                     assessment_type, exercise_number)
+            conn.commit()
+        finally:
+            conn.close()
+
+        results.append({"submission_id": sub_id, "student_name": student_name, **result})
+
+    awarded_list = [r["total_marks_awarded"] for r in results]
+    avg = round(sum(awarded_list) / len(awarded_list), 1) if awarded_list else 0
+    return {
+        "class_name":    class_name,
+        "total_marked":  len(results),
+        "class_average": avg,
+        "results":       results
+    }
+
+
+@app.patch("/api/submissions/{submission_id}/amend")
+async def amend_submission(submission_id: str, payload: dict):
+    """Update marks for one or more questions and recompute totals."""
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT questions_data, max_marks FROM submissions WHERE id=%s",
+            (submission_id,))
+        row = _fetchone_dict(cur)
+        if not row:
+            raise HTTPException(404, "Submission not found")
+
+        questions  = json.loads(row["questions_data"] or "[]")
+        amendments = {q["question_number"]: q["marks_awarded"]
+                      for q in payload.get("questions", [])}
+
+        for q in questions:
+            qn = q.get("question_number", "")
+            if qn in amendments:
+                new_val   = int(amendments[qn])
+                available = q.get("marks_available", 0)
+                q["marks_awarded"] = max(0, min(new_val, available))
+                q["amended"]       = True
+
+        awarded   = sum(q.get("marks_awarded",  0) for q in questions)
+        available = sum(q.get("marks_available", 0) for q in questions)
+        pct       = round((awarded / available) * 100, 1) if available > 0 else 0
+        grade     = grade_from_pct(pct)
+
+        cur.execute("""
+            UPDATE submissions
+            SET questions_data=%s, marks_awarded=%s, percentage=%s, grade=%s
+            WHERE id=%s""",
+            (json.dumps(questions), awarded, pct, grade, submission_id))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    return {
+        "submission_id":         submission_id,
+        "total_marks_awarded":   awarded,
+        "total_marks_available": available,
+        "percentage":            pct,
+        "grade":                 grade,
+        "questions":             questions,
+    }
+
+
+@app.get("/api/submissions/{class_name}")
+async def list_submissions(class_name: str):
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT s.*, st.name as student_name
+        FROM submissions s
+        LEFT JOIN students st ON s.student_id = st.id
+        WHERE s.class_name = %s
+        ORDER BY s.marked_at DESC""", (class_name,))
+    rows = _fetchall_dicts(cur)
+    cur.close()
+    conn.close()
+    return [
+        {**r, "questions": json.loads(r["questions_data"] or "[]")}
+        for r in rows
+    ]
+
+
+@app.delete("/api/submissions/{submission_id}")
+async def delete_submission(submission_id: str):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute("DELETE FROM submissions WHERE id = %s", (submission_id,))
+        conn.commit()
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Submission not found")
+    finally:
+        cur.close()
+        conn.close()
+    return {"deleted": submission_id}
+
+
+@app.delete("/api/submissions/group/{assessment_type}/{exercise_number}/{class_name}")
+async def delete_group(assessment_type: str, exercise_number: int, class_name: str):
+    conn = get_db()
+    cur  = conn.cursor()
+    try:
+        cur.execute(
+            "DELETE FROM submissions WHERE assessment_type=%s AND exercise_number=%s AND class_name=%s",
+            (assessment_type, exercise_number, class_name))
+        conn.commit()
+        deleted = cur.rowcount
+    finally:
+        cur.close()
+        conn.close()
+    return {"deleted_count": deleted}
+
+
+@app.get("/api/classes")
+async def list_classes():
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT c.name,
+               COUNT(s.id)                 AS submission_count,
+               ROUND(AVG(s.percentage)::numeric, 1) AS avg_percentage
+        FROM classes c
+        LEFT JOIN submissions s ON c.name = s.class_name
+        GROUP BY c.name
+        ORDER BY c.name""")
+    rows = _fetchall_dicts(cur)
+    cur.close()
+    conn.close()
+    return rows
+
+
+@app.get("/api/analytics/{class_name}")
+async def class_analytics(class_name: str):
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("SELECT * FROM submissions WHERE class_name=%s", (class_name,))
+    subs = _fetchall_dicts(cur)
+    cur.close()
+    conn.close()
+    if not subs:
+        return {"class_name": class_name, "total_submissions": 0}
+    n = len(subs)
+    grades: dict = {}
+    total_pct = 0.0
+    for s in subs:
+        g = s["grade"] or "U"
+        grades[g] = grades.get(g, 0) + 1
+        total_pct += s["percentage"] or 0
+    return {
+        "class_name":         class_name,
+        "total_submissions":  n,
+        "class_average":      round(total_pct / n, 1),
+        "grade_distribution": grades,
+    }
+
+
+@app.get("/api/export/{class_name}")
+async def export_csv(class_name: str):
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        SELECT st.name, s.marks_awarded, s.max_marks, s.percentage,
+               s.grade, s.paper_type, s.overall_feedback, s.marked_at
+        FROM submissions s
+        LEFT JOIN students st ON s.student_id = st.id
+        WHERE s.class_name = %s
+        ORDER BY st.name""", (class_name,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    out = io.StringIO()
+    w   = csv.writer(out)
+    w.writerow(["Student", "Marks Awarded", "Max Marks", "Percentage",
+                "Grade", "Paper Type", "Feedback", "Date Marked"])
+    for r in rows:
+        w.writerow(list(r))
+    out.seek(0)
+    fname = f"SankofahScriptAI_{class_name}_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([out.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"}
+    )
+
+
+@app.get("/api/export-exercise")
+async def export_exercise_csv(
+    assessment_type:  str = "Class Exercise",
+    exercise_number:  int = 1,
+    class_name:       str = "",
+):
+    conn = get_db()
+    cur  = conn.cursor()
+    if class_name:
+        cur.execute("""
+            SELECT st.name, s.class_name, s.marks_awarded, s.max_marks, s.percentage,
+                   s.grade, s.paper_type, s.assessment_type, s.exercise_number,
+                   s.overall_feedback, s.teacher_notes, s.marked_at
+            FROM submissions s
+            LEFT JOIN students st ON s.student_id = st.id
+            WHERE s.assessment_type = %s AND s.exercise_number = %s AND s.class_name = %s
+            ORDER BY s.percentage DESC""",
+            (assessment_type, exercise_number, class_name))
+    else:
+        cur.execute("""
+            SELECT st.name, s.class_name, s.marks_awarded, s.max_marks, s.percentage,
+                   s.grade, s.paper_type, s.assessment_type, s.exercise_number,
+                   s.overall_feedback, s.teacher_notes, s.marked_at
+            FROM submissions s
+            LEFT JOIN students st ON s.student_id = st.id
+            WHERE s.assessment_type = %s AND s.exercise_number = %s
+            ORDER BY s.class_name, s.percentage DESC""",
+            (assessment_type, exercise_number))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    out = io.StringIO()
+    w   = csv.writer(out)
+    w.writerow(["Student", "Class", "Marks Awarded", "Max Marks", "Percentage",
+                "Grade", "Paper Type", "Assessment Type", "Exercise No.",
+                "Student Feedback", "Teacher Notes", "Date Marked"])
+    for r in rows:
+        w.writerow(list(r))
+    out.seek(0)
+
+    safe_type = assessment_type.replace(" ", "_")
+    cls_part  = f"_{class_name.replace(' ', '_')}" if class_name else ""
+    fname     = f"SankofahScriptAI_{safe_type}_{exercise_number}{cls_part}_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([out.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"}
+    )
+
+
+# ── Serve frontend ────────────────────────────────────────────────────────────
+
+FRONTEND = Path(__file__).parent.parent / "frontend" / "index.html"
+
+@app.get("/")
+async def serve_frontend():
+    if FRONTEND.exists():
+        return FileResponse(FRONTEND, media_type="text/html")
+    return {"error": "Frontend not found", "expected_path": str(FRONTEND)}
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

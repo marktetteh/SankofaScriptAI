@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sankofascriptai
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false        # you will paste this in the Render dashboard
+      - key: DATABASE_URL
+        sync: false        # paste your Neon connection string here
+      - key: PYTHON_VERSION
+        value: 3.11.0

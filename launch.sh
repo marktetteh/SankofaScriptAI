@@ -15,24 +15,38 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 
-# ── STEP 2: API Key — save to backend/.env on first run ───────────────────────
+# ── STEP 2: First-run setup — save credentials to backend/.env ────────────────
 if [ ! -f "backend/.env" ]; then
-    echo " [SETUP] First time setup - enter your Google API key."
-    echo "         Get one free at: https://aistudio.google.com/apikey"
+    echo " [SETUP] First time setup"
     echo ""
-    read -rp "  Paste your Google API key here: " APIKEY
-    echo "GOOGLE_API_KEY=$APIKEY" > backend/.env
+    echo " 1. Google API key — get one free at: https://aistudio.google.com/apikey"
+    read -rp "    Paste your Google API key: " APIKEY
     echo ""
-    echo " [OK] Key saved to backend/.env"
+    echo " 2. PostgreSQL connection string"
+    echo "    Local example:  postgresql://postgres:password@localhost:5432/sankofascript"
+    echo "    Render / Neon:  postgresql://user:pass@host/dbname?sslmode=require"
+    read -rp "    Paste your DATABASE_URL: " DBURL
+    {
+        echo "GOOGLE_API_KEY=$APIKEY"
+        echo "DATABASE_URL=$DBURL"
+    } > backend/.env
+    echo ""
+    echo " [OK] Credentials saved to backend/.env"
     echo ""
 fi
 
-# Load GOOGLE_API_KEY from backend/.env
+# Load all variables from backend/.env
 export $(grep -v '^#' backend/.env | xargs)
 
 if [ -z "$GOOGLE_API_KEY" ]; then
     echo " [ERROR] GOOGLE_API_KEY is empty in backend/.env"
     echo "         Open backend/.env and paste your key after the = sign."
+    exit 1
+fi
+
+if [ -z "$DATABASE_URL" ]; then
+    echo " [ERROR] DATABASE_URL is empty in backend/.env"
+    echo "         Open backend/.env and add: DATABASE_URL=postgresql://..."
     exit 1
 fi
 
