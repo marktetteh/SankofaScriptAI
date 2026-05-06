@@ -1,0 +1,27 @@
+# Database — contains student data, never push this
+backend/grademate.db
+backend/*.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment variables — contains your API key, never push this
+.env
+*.env
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/

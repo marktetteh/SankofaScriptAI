@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SankofahScriptAI — Cambridge 0580</title>
+<style>
+:root {
+  --bg:#0f1117; --surface:#1a1d27; --surface2:#232733;
+  --border:#2e3348; --text:#e8eaed; --text2:#9aa0b4;
+  --accent:#6c63ff; --accent2:#8b83ff;
+  --green:#34d399; --red:#f87171; --yellow:#fbbf24;
+  --blue:#60a5fa; --purple:#c084fc; --orange:#fb923c;
+  --radius:12px;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+a{color:inherit;text-decoration:none;}
+
+/* ── Layout ── */
+.app{display:flex;min-height:100vh;}
+.sidebar{width:240px;background:var(--surface);border-right:1px solid var(--border);padding:20px 12px;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:10;overflow-y:auto;}
+.main{margin-left:240px;flex:1;padding:32px;max-width:960px;}
+
+/* ── Sidebar ── */
+.logo{display:flex;align-items:center;gap:10px;padding:4px 8px;margin-bottom:28px;}
+.logo-icon{width:34px;height:34px;background:linear-gradient(135deg,var(--accent),var(--purple));border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:17px;flex-shrink:0;}
+.logo h1{font-size:19px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.logo-sub{font-size:11px;color:var(--text2);padding:0 8px;margin-bottom:16px;}
+
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:9px;cursor:pointer;font-size:14px;color:var(--text2);transition:all 0.15s;border:none;background:none;width:100%;text-align:left;margin-bottom:2px;}
+.nav-item:hover{background:var(--surface2);color:var(--text);}
+.nav-item.active{background:rgba(108,99,255,0.18);color:var(--accent2);font-weight:500;}
+.nav-item svg{width:18px;height:18px;flex-shrink:0;opacity:0.8;}
+
+.status-pill{margin-top:auto;padding:10px 12px;border-radius:9px;background:var(--surface2);font-size:12px;display:flex;align-items:center;gap:8px;}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.dot.on{background:var(--green);box-shadow:0 0 6px rgba(52,211,153,0.5);}
+.dot.off{background:var(--red);}
+
+/* ── Pages ── */
+.page{display:none;}.page.active{display:block;}
+.page-header{margin-bottom:28px;}
+.page-header h2{font-size:22px;font-weight:700;margin-bottom:4px;}
+.page-header p{font-size:14px;color:var(--text2);}
+
+/* ── Cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;margin-bottom:20px;}
+.card-title{font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px;}
+
+/* ── Stats ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px;}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;text-align:center;}
+.stat-value{font-size:28px;font-weight:700;margin-bottom:2px;}
+.stat-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;}
+
+/* ── Forms ── */
+.form-group{margin-bottom:14px;}
+.form-group label{display:block;font-size:13px;font-weight:500;color:var(--text2);margin-bottom:5px;}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+input,select,textarea{width:100%;padding:10px 13px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;outline:none;transition:border 0.15s;}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);}
+textarea{resize:vertical;min-height:80px;}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:none;transition:all 0.15s;font-family:inherit;}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-primary:hover{background:var(--accent2);}
+.btn-primary:disabled{opacity:0.45;cursor:not-allowed;}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.btn-secondary:hover{background:var(--border);}
+.btn-danger{background:rgba(248,113,113,0.12);color:var(--red);border:1px solid rgba(248,113,113,0.25);}
+.btn-danger:hover{background:rgba(248,113,113,0.22);}
+.btn-sm{padding:6px 12px;font-size:12px;}
+.btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;}
+
+/* ── Upload area ── */
+.upload-area{border:2px dashed var(--border);border-radius:10px;padding:32px 20px;text-align:center;cursor:pointer;transition:all 0.2s;position:relative;}
+.upload-area:hover,.upload-area.drag{border-color:var(--accent);background:rgba(108,99,255,0.05);}
+.upload-area input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.upload-area svg{margin:0 auto 10px;display:block;opacity:0.5;}
+.upload-area p{font-size:13px;color:var(--text2);margin:2px 0;}
+.upload-area .file-name{color:var(--accent);font-weight:600;margin-top:6px;font-size:13px;display:none;}
+.upload-area.has-file{border-color:var(--green);background:rgba(52,211,153,0.05);}
+.upload-area.has-file svg{opacity:0.8;}
+.upload-hint{font-size:11px;color:var(--text2);margin-top:8px;}
+
+/* ── Results ── */
+.result-hero{background:var(--surface2);border-radius:10px;padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;}
+.grade-badge{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;flex-shrink:0;}
+.grade-a-star{background:rgba(251,191,36,0.2);color:var(--yellow);}
+.grade-a{background:rgba(52,211,153,0.2);color:var(--green);}
+.grade-b{background:rgba(96,165,250,0.2);color:var(--blue);}
+.grade-c{background:rgba(251,191,36,0.15);color:var(--yellow);}
+.grade-d,.grade-e{background:rgba(251,146,60,0.15);color:var(--orange);}
+.grade-u{background:rgba(248,113,113,0.15);color:var(--red);}
+.hero-info{flex:1;}
+.hero-name{font-size:18px;font-weight:700;margin-bottom:4px;}
+.hero-marks{font-size:14px;color:var(--text2);}
+.hero-pct{font-size:30px;font-weight:700;color:var(--accent);margin-left:auto;}
+
+.q-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:16px;}
+.q-table th{text-align:left;padding:8px 12px;background:var(--surface2);color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);}
+.q-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;}
+.q-table tr:last-child td{border-bottom:none;}
+.q-table tr:hover td{background:rgba(255,255,255,0.02);}
+.mark-chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;}
+.chip-full{background:rgba(52,211,153,0.15);color:var(--green);}
+.chip-part{background:rgba(251,191,36,0.15);color:var(--yellow);}
+.chip-zero{background:rgba(248,113,113,0.12);color:var(--red);}
+.chip-amended{background:rgba(251,146,60,0.15);color:var(--orange);outline:1px dashed var(--orange);}
+
+.feedback-box{background:rgba(108,99,255,0.08);border:1px solid rgba(108,99,255,0.2);border-radius:8px;padding:14px;font-size:13px;line-height:1.6;}
+.teacher-box{background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2);border-radius:8px;padding:14px;font-size:13px;line-height:1.6;margin-top:10px;}
+
+/* ── Mark amendment ── */
+.edit-mark-btn{opacity:0;background:none;border:none;cursor:pointer;color:var(--text2);font-size:13px;padding:2px 5px;border-radius:5px;transition:opacity 0.15s;}
+.edit-mark-btn:hover{color:var(--accent);background:rgba(108,99,255,0.1);}
+tr:hover .edit-mark-btn{opacity:1;}
+.mark-edit-input{width:42px;padding:3px 6px;background:var(--surface2);border:1px solid var(--accent);border-radius:6px;color:var(--text);font-size:12px;font-weight:600;text-align:center;}
+.mark-edit-input:focus{outline:none;}
+.amend-bar{background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.25);border-radius:8px;padding:10px 14px;margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.amend-bar span{font-size:12px;color:var(--orange);}
+.unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);flex-shrink:0;}
+
+/* ── Confirm modal ── */
+#confirmModal{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;}
+#confirmModal.open{display:flex;}
+.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5);}
+.confirm-box h3{margin:0 0 6px;font-size:16px;color:var(--text);}
+.confirm-box p{margin:0 0 18px;font-size:13px;color:var(--text2);line-height:1.6;}
+.confirm-changes{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:13px;}
+.confirm-change-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);}
+.confirm-change-row:last-child{border-bottom:none;}
+.confirm-change-row .qnum{font-weight:700;color:var(--accent);}
+.confirm-change-row .before{color:var(--red);text-decoration:line-through;opacity:0.8;}
+.confirm-change-row .arrow{color:var(--text2);margin:0 6px;}
+.confirm-change-row .after{color:var(--green);font-weight:700;}
+.confirm-btns{display:flex;gap:10px;justify-content:flex-end;}
+.confirm-warning{font-size:11px;color:var(--orange);margin-bottom:16px;display:flex;gap:6px;align-items:flex-start;}
+.confirm-warning svg{flex-shrink:0;margin-top:1px;}
+
+/* ── Batch rows ── */
+.batch-row{display:flex;align-items:center;gap:10px;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
+.batch-row .student-num{font-size:12px;color:var(--text2);font-weight:600;width:24px;flex-shrink:0;text-align:center;}
+.batch-row input[type=text]{flex:1;min-width:120px;}
+.batch-file-label{flex:1.5;min-width:140px;border:1.5px dashed var(--border);border-radius:7px;padding:8px 12px;cursor:pointer;font-size:12px;color:var(--text2);text-align:center;transition:all 0.15s;position:relative;overflow:hidden;}
+.batch-file-label:hover{border-color:var(--accent);color:var(--accent);}
+.batch-file-label.has-file{border-color:var(--green);color:var(--green);background:rgba(52,211,153,0.06);}
+.batch-file-label input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+
+/* ── History ── */
+.history-row{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface2);border-radius:9px;margin-bottom:8px;cursor:pointer;transition:background 0.15s;}
+.history-row:hover{background:var(--border);}
+.h-grade{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;}
+.h-name{flex:1;font-size:14px;font-weight:500;}
+.h-meta{font-size:12px;color:var(--text2);}
+.h-marks{font-size:14px;font-weight:600;color:var(--accent);}
+
+/* ── Tag ── */
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+.tag-core{background:rgba(96,165,250,0.15);color:var(--blue);}
+.tag-ext{background:rgba(192,132,252,0.15);color:var(--purple);}
+.tag-ok{background:rgba(52,211,153,0.15);color:var(--green);}
+.tag-err{background:rgba(248,113,113,0.15);color:var(--red);}
+
+/* ── Loading overlay ── */
+#loadingOverlay{display:none;position:fixed;inset:0;background:rgba(15,17,23,0.85);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
+#loadingOverlay.show{display:flex;}
+.spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.loading-msg{font-size:14px;color:var(--text2);text-align:center;max-width:300px;line-height:1.6;}
+
+/* ── Toast ── */
+#toast{position:fixed;bottom:24px;right:24px;z-index:200;display:flex;flex-direction:column;gap:8px;}
+.toast-item{padding:12px 18px;border-radius:9px;font-size:13px;font-weight:500;animation:slideIn 0.25s ease;box-shadow:0 4px 20px rgba(0,0,0,0.4);}
+.toast-ok{background:#1a3a2a;border:1px solid var(--green);color:var(--green);}
+.toast-err{background:#3a1a1a;border:1px solid var(--red);color:var(--red);}
+.toast-info{background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+@keyframes slideIn{from{transform:translateX(60px);opacity:0;}to{transform:translateX(0);opacity:1;}}
+
+/* ── Misc ── */
+.divider{border:none;border-top:1px solid var(--border);margin:20px 0;}
+.empty{text-align:center;padding:40px 20px;color:var(--text2);font-size:14px;}
+.progress-bar{height:8px;border-radius:4px;background:var(--surface2);overflow:hidden;margin-top:4px;}
+.progress-fill{height:100%;border-radius:4px;transition:width 0.3s;}
+
+/* ── Solution panel ── */
+.sol-toggle{background:none;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:3px 9px;font-size:11px;font-weight:600;color:var(--green);cursor:pointer;transition:all 0.15s;white-space:nowrap;}
+.sol-toggle:hover{background:rgba(52,211,153,0.1);border-color:var(--green);}
+.sol-toggle.open{background:rgba(52,211,153,0.12);border-color:var(--green);}
+.sol-row{display:none;}
+.sol-row.open{display:table-row;}
+.sol-panel{background:rgba(52,211,153,0.05);border-top:1px dashed rgba(52,211,153,0.2);padding:14px 16px 16px;}
+.sol-answer{display:flex;align-items:baseline;gap:8px;margin-bottom:10px;}
+.sol-answer-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);white-space:nowrap;}
+.sol-answer-value{font-size:14px;font-weight:700;color:var(--text);background:rgba(52,211,153,0.12);border-radius:6px;padding:3px 10px;border:1px solid rgba(52,211,153,0.25);}
+.sol-steps-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);margin-bottom:6px;}
+.sol-steps{font-size:13px;line-height:1.8;color:var(--text);background:rgba(255,255,255,0.03);border-radius:8px;padding:12px 14px;border:1px solid var(--border);white-space:pre-wrap;font-family:inherit;}
+
+/* ── Assessment groups (History) ── */
+.assess-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;}
+.assess-group-header{display:flex;align-items:center;gap:12px;padding:14px 18px;cursor:pointer;transition:background 0.15s;user-select:none;}
+.assess-group-header:hover{background:var(--surface2);}
+.assess-icon{font-size:20px;flex-shrink:0;}
+.assess-title{flex:1;}
+.assess-title strong{font-size:15px;font-weight:600;display:block;}
+.assess-title span{font-size:12px;color:var(--text2);}
+.assess-stats{display:flex;gap:16px;align-items:center;flex-shrink:0;}
+.assess-avg{font-size:20px;font-weight:700;color:var(--accent);}
+.assess-count{font-size:12px;color:var(--text2);text-align:right;}
+.assess-chevron{font-size:14px;color:var(--text2);transition:transform 0.2s;flex-shrink:0;}
+.assess-group.open .assess-chevron{transform:rotate(90deg);}
+.assess-body{display:none;border-top:1px solid var(--border);}
+.assess-group.open .assess-body{display:block;}
+.assess-student-row{border-bottom:1px solid var(--border);cursor:pointer;}
+.assess-student-row:last-child{border-bottom:none;}
+.assess-student-row:hover .assess-student-main{background:var(--surface2);}
+.assess-student-main{display:flex;align-items:center;gap:12px;padding:10px 18px;transition:background 0.15s;position:relative;}
+.del-btn{opacity:0;transition:opacity 0.15s;background:none;border:none;cursor:pointer;color:var(--red);padding:4px 6px;border-radius:6px;font-size:15px;line-height:1;flex-shrink:0;}
+.del-btn:hover{background:rgba(248,113,113,0.12);}
+.assess-student-main:hover .del-btn{opacity:1;}
+.assess-student-row.fb-open .assess-student-main{background:var(--surface2);}
+.assess-feedback-panel{display:none;padding:12px 18px 16px 18px;border-top:1px dashed var(--border);background:rgba(108,99,255,0.04);}
+.assess-student-row.fb-open .assess-feedback-panel{display:block;}
+.fb-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
+.fb-text{font-size:13px;line-height:1.6;color:var(--text);}
+.mini-bar{height:5px;width:80px;border-radius:3px;background:var(--surface2);overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px;}
+.mini-fill{height:100%;border-radius:3px;}
+.assess-footer{padding:10px 18px;border-top:1px solid var(--border);display:flex;gap:8px;background:var(--surface2);}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Sidebar ── -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-icon">S</div>
+    <h1>SankofahScriptAI</h1>
+  </div>
+  <div class="logo-sub">AI-assisted marking for modern classrooms</div>
+
+  <button class="nav-item active" onclick="showPage('dashboard')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    Dashboard
+  </button>
+  <button class="nav-item" onclick="showPage('mark')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13l2 2 4-4"/></svg>
+    Mark Paper
+  </button>
+  <button class="nav-item" onclick="showPage('batch')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+    Batch Mark
+  </button>
+  <button class="nav-item" onclick="showPage('history')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    History
+  </button>
+
+  <div class="status-pill" id="statusPill">
+    <div class="dot off" id="statusDot"></div>
+    <div>
+      <div id="statusText" style="font-weight:500;">Connecting…</div>
+      <div id="statusModel" style="color:var(--text2);font-size:11px;margin-top:1px;"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main class="main">
+
+  <!-- DASHBOARD -->
+  <div class="page active" id="page-dashboard">
+
+    <!-- Hero welcome -->
+    <div style="background:linear-gradient(135deg,rgba(108,99,255,0.15),rgba(192,132,252,0.1));border:1px solid rgba(108,99,255,0.25);border-radius:14px;padding:28px 32px;margin-bottom:28px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <div style="font-size:22px;font-weight:800;margin-bottom:6px;">Welcome to SankofahScriptAI</div>
+        <div style="font-size:14px;color:var(--text2);line-height:1.7;margin-bottom:18px;">Upload a student's answer paper and Gemma will read the questions, mark the answers, and give detailed feedback — all in under 60 seconds.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="showPage('mark')" style="font-size:14px;padding:11px 22px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13l2 2 4-4"/></svg>
+            Mark a Paper
+          </button>
+          <button class="btn btn-secondary" onclick="showPage('batch')" style="font-size:14px;padding:11px 22px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+            Batch Mark Class
+          </button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;flex-shrink:0;">
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--accent);" id="dTotalPapers">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Papers</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--green);" id="dAvgScore">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Avg Score</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--purple);" id="dClasses">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Classes</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 18px;text-align:center;">
+          <div style="font-size:26px;font-weight:800;color:var(--yellow);" id="dTopGrade">—</div>
+          <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Top Grade</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- How it works (shown when no data) -->
+    <div id="howItWorks" class="card" style="display:none;">
+      <div class="card-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Getting Started — 3 Easy Steps
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">📷</div>
+          <div style="font-weight:600;margin-bottom:4px;">1. Upload the paper</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">Take a photo or scan the student's answer sheet. JPG, PNG, or PDF all work.</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">🤖</div>
+          <div style="font-weight:600;margin-bottom:4px;">2. Gemma marks it</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">The AI reads printed questions and handwritten answers, then applies Cambridge M/A/B mark conventions.</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:10px;padding:18px;">
+          <div style="font-size:24px;margin-bottom:8px;">✏️</div>
+          <div style="font-weight:600;margin-bottom:4px;">3. Review &amp; adjust</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;">See per-question marks, worked solutions, and student feedback. Amend any marks with one click.</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;text-align:center;">
+        <button class="btn btn-primary" onclick="showPage('mark')" style="font-size:14px;padding:11px 28px;">
+          Mark your first paper →
+        </button>
+      </div>
+    </div>
+
+    <!-- Recent results -->
+    <div class="card" id="recentCard">
+      <div class="card-title" style="justify-content:space-between;">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Recent Results
+        </span>
+        <button class="btn btn-secondary btn-sm" onclick="showPage('history')">View All →</button>
+      </div>
+      <div id="dashRecent"><div class="empty">No papers marked yet. Click "Mark a Paper" above to get started.</div></div>
+    </div>
+
+    <div class="card" id="classCard" style="display:none;">
+      <div class="card-title">Class Averages</div>
+      <div id="classTable"></div>
+    </div>
+  </div>
+
+  <!-- MARK PAPER (single student) -->
+  <div class="page" id="page-mark">
+    <div class="page-header">
+      <h2>Mark Paper</h2>
+      <p>Upload a student's answer paper — photo or PDF. Gemma reads the questions and the student's answers, then marks everything automatically.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/></svg>
+        Paper Details
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Student Name</label>
+          <input id="mName" type="text" placeholder="e.g. Kofi Mensah">
+        </div>
+        <div class="form-group">
+          <label>Class</label>
+          <select id="mClass">
+            <option value="Form 3">Form 3</option>
+            <option value="Form 4">Form 4</option>
+            <option value="Form 5">Form 5</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group">
+          <label>Assessment Type</label>
+          <select id="mAssessType">
+            <option value="Class Exercise">Class Exercise</option>
+            <option value="Homework">Homework</option>
+            <option value="Test">Test</option>
+            <option value="Mid-Term Test">Mid-Term Test</option>
+            <option value="Exam">Exam</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Number</label>
+          <select id="mExerciseNum">
+            <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+            <option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+            <option>11</option><option>12</option><option>13</option><option>14</option><option>15</option>
+            <option>16</option><option>17</option><option>18</option><option>19</option><option>20</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Paper Type</label>
+          <select id="mPaper">
+            <option value="Auto-detect">Auto-detect</option>
+            <option value="Core">Core</option>
+            <option value="Extended">Extended</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-top:4px;">
+        <label>Answer Paper (photo or PDF)</label>
+        <div class="upload-area" id="mDropZone">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text2)" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <p>Drop photo or PDF of the answer paper here</p>
+          <p style="font-size:11px;color:var(--text2);margin-top:4px;">Accepts: JPG · PNG · PDF</p>
+          <div class="file-name" id="mFileName"></div>
+          <input type="file" id="mFile" accept="image/*,.pdf" onchange="onMarkFileSelect(event)">
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" id="mMarkBtn" onclick="markSinglePaper()" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+          Mark Paper
+        </button>
+        <button class="btn btn-secondary" onclick="clearMark()">Clear</button>
+      </div>
+    </div>
+
+    <!-- Result appears here -->
+    <div id="mResult"></div>
+  </div>
+
+  <!-- BATCH MARK -->
+  <div class="page" id="page-batch">
+    <div class="page-header">
+      <h2>Batch Mark</h2>
+      <p>Upload answer papers for a whole class. Gemma marks each paper separately and shows a class summary.</p>
+    </div>
+
+    <div class="card">
+      <div class="form-row" style="margin-bottom:12px;">
+        <div class="form-group">
+          <label>Class</label>
+          <select id="bClass">
+            <option value="Form 3">Form 3</option>
+            <option value="Form 4">Form 4</option>
+            <option value="Form 5">Form 5</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Paper Type</label>
+          <select id="bPaper">
+            <option value="Auto-detect">Auto-detect</option>
+            <option value="Core">Core</option>
+            <option value="Extended">Extended</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:16px;">
+        <div class="form-group">
+          <label>Assessment Type</label>
+          <select id="bAssessType">
+            <option value="Class Exercise">Class Exercise</option>
+            <option value="Homework">Homework</option>
+            <option value="Test">Test</option>
+            <option value="Mid-Term Test">Mid-Term Test</option>
+            <option value="Exam">Exam</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Number</label>
+          <select id="bExerciseNum">
+            <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+            <option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+            <option>11</option><option>12</option><option>13</option><option>14</option><option>15</option>
+            <option>16</option><option>17</option><option>18</option><option>19</option><option>20</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card-title" style="margin-bottom:12px;">
+        Students
+        <button class="btn btn-secondary btn-sm" style="margin-left:auto;" onclick="addBatchRow()">+ Add Student</button>
+      </div>
+      <div id="batchRows"></div>
+
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn btn-primary" id="bMarkBtn" onclick="markBatch()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+          Mark All Papers
+        </button>
+        <button class="btn btn-secondary" onclick="addBatchRow()">+ Add Student</button>
+      </div>
+    </div>
+
+    <!-- Batch results -->
+    <div id="bResult"></div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="page" id="page-history">
+    <div class="page-header">
+      <h2>History</h2>
+      <p>All marked papers, grouped by assessment and class</p>
+    </div>
+
+    <div class="card" style="padding:16px 20px;">
+      <div style="display:flex;gap:10px;align-items:center;">
+        <select id="hClassFilter" onchange="loadHistory()" style="flex:1;">
+          <option value="">All Classes</option>
+          <option value="Form 3">Form 3</option>
+          <option value="Form 4">Form 4</option>
+          <option value="Form 5">Form 5</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="exportClass()">⬇ Export CSV</button>
+      </div>
+    </div>
+
+    <div id="historyList"><div class="empty">No results yet.</div></div>
+  </div>
+
+</main>
+</div>
+
+<!-- Loading overlay -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-msg" id="loadingMsg">Gemma is reading the paper…<br>This may take 30–90 seconds.</div>
+</div>
+
+<!-- Confirm amendment modal -->
+<div id="confirmModal" onclick="if(event.target===this)closeConfirmModal()">
+  <div class="confirm-box">
+    <h3>Confirm Mark Changes</h3>
+    <p>You are about to permanently update the following marks for <strong id="confirmStudentName"></strong>:</p>
+    <div class="confirm-changes" id="confirmChangesList"></div>
+    <div class="confirm-warning">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      This action is permanent and cannot be undone. The original AI marks will be replaced.
+    </div>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="closeConfirmModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirmSaveBtn" onclick="confirmSaveAmendments()">✔ Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast"></div>
+
+<script>
+const API = '/api';
+
+// Fetch with an 8-minute timeout — prevents "Failed to fetch" on slow PDF processing
+async function fetchWithTimeout(url, options = {}, ms = 480000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    return resp;
+  } catch(e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out after 8 minutes — the paper may be too large. Try a smaller file.');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Fetch with automatic retry — retries once on network errors (like "Failed to fetch")
+async function fetchWithRetry(url, options = {}, ms = 480000, label = '') {
+  try {
+    return await fetchWithTimeout(url, options, ms);
+  } catch(e) {
+    const isNetwork = e.message.includes('Failed to fetch') ||
+                      e.message.includes('NetworkError') ||
+                      e.message.includes('Load failed');
+    if (isNetwork) {
+      console.warn(`[FETCH] Network error for ${label} — waiting 10s then retrying…`, e.message);
+      await new Promise(r => setTimeout(r, 10000));
+      return await fetchWithTimeout(url, options, ms);
+    }
+    throw e;
+  }
+}
+let batchRowCount = 0;
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  const idx = ['dashboard','mark','batch','history'].indexOf(id);
+  document.querySelectorAll('.nav-item')[idx]?.classList.add('active');
+  if (id === 'dashboard') loadDashboard();
+  if (id === 'history')   loadHistory();
+}
+
+function loading(msg) {
+  document.getElementById('loadingMsg').innerHTML = msg || 'Gemma is reading the paper…<br>This may take 30–90 seconds.';
+  document.getElementById('loadingOverlay').classList.add('show');
+}
+function doneLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast-item toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+async function api(path, opts = {}) {
+  const resp = await fetch(API + path, opts);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || resp.statusText);
+  }
+  return resp.json();
+}
+
+// ── Health check ──────────────────────────────────────────────────────────
+
+async function checkHealth() {
+  try {
+    const data = await api('/health');
+    document.getElementById('statusDot').className = 'dot on';
+    document.getElementById('statusText').textContent = data.provider || 'Connected';
+    document.getElementById('statusModel').textContent = data.model || '';
+  } catch {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = 'Backend offline';
+    document.getElementById('statusModel').textContent = 'Run: python3 main.py';
+  }
+}
+
+// ── Grade colour helper ───────────────────────────────────────────────────
+
+function gradeClass(g) {
+  const map = {'A*':'grade-a-star','A':'grade-a','B':'grade-b','C':'grade-c','D':'grade-d','E':'grade-e','U':'grade-u'};
+  return map[g] || 'grade-u';
+}
+function gradeColor(g) {
+  const map = {'A*':'var(--yellow)','A':'var(--green)','B':'var(--blue)','C':'var(--yellow)','D':'var(--orange)','E':'var(--orange)','U':'var(--red)'};
+  return map[g] || 'var(--red)';
+}
+
+// ── Mark chip helper ──────────────────────────────────────────────────────
+
+function markChip(awarded, available) {
+  if (awarded === 0) return `<span class="mark-chip chip-zero">${awarded}/${available}</span>`;
+  if (awarded >= available) return `<span class="mark-chip chip-full">${awarded}/${available}</span>`;
+  return `<span class="mark-chip chip-part">${awarded}/${available}</span>`;
+}
+
+// ── Result renderer ───────────────────────────────────────────────────────
+
+function renderResult(data, containerId) {
+  const el = document.getElementById(containerId);
+  const g  = data.grade || 'U';
+  const pct = data.percentage ?? 0;
+  const awarded = data.total_marks_awarded ?? 0;
+  const avail   = data.total_marks_available ?? 0;
+  const name    = data.student_name || 'Student';
+  const subId   = data.submission_id || '';
+  const cardId  = 'card-' + (subId || containerId);
+
+  // Progress bar fill colour
+  const barColor = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+
+  const qRows = (data.questions || []).map((q, i) => {
+    const ma      = q.marks_awarded ?? 0;
+    const mx      = q.marks_available ?? 0;
+    const qn      = q.question_number ?? i+1;
+    const isWrong = ma < mx;                          // partial or zero marks
+    const amended = q.amended ? 'chip-amended' : '';
+    const chip    = q.amended
+      ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+      : markChip(ma, mx);
+    const hasSol  = q.correct_answer || q.worked_solution;
+    const solId   = `sol-${cardId}-${i}`;
+    // Auto-expand solution panel for wrong/partial answers
+    const solOpenClass = isWrong && hasSol ? ' open' : '';
+    const solRow  = hasSol ? `
+    <tr class="sol-row${solOpenClass}" id="${solId}">
+      <td colspan="5" style="padding:0;">
+        <div class="sol-panel">
+          ${isWrong && q.student_answer ? `
+          <div class="sol-answer" style="margin-bottom:8px;">
+            <span class="sol-answer-label" style="color:var(--red);">✗ Student's Answer</span>
+            <span class="sol-answer-value" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.3);color:var(--text);">${escHtml(q.student_answer)}</span>
+          </div>` : ''}
+          ${q.correct_answer ? `
+          <div class="sol-answer">
+            <span class="sol-answer-label">✓ Correct Answer</span>
+            <span class="sol-answer-value">${escHtml(q.correct_answer)}</span>
+          </div>` : ''}
+          ${q.worked_solution ? `
+          <div class="sol-steps-label">📐 Worked Solution</div>
+          <div class="sol-steps">${escHtml(q.worked_solution)}</div>` : ''}
+        </div>
+      </td>
+    </tr>` : '';
+    return `<tr id="qrow-${cardId}-${i}">
+      <td style="font-weight:600;color:var(--accent);">Q${qn}</td>
+      <td style="max-width:220px;line-height:1.5;">${escHtml(q.question_text || '—')}</td>
+      <td style="max-width:180px;color:var(--text2);font-size:12px;line-height:1.4;">${escHtml(q.student_answer || 'No attempt')}</td>
+      <td style="white-space:nowrap;">
+        <span id="chip-${cardId}-${i}">${chip}</span>
+        ${subId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${cardId}',${i},'${qn}',${ma},${mx},'${subId}')">✏️</button>` : ''}
+      </td>
+      <td style="font-size:12px;color:var(--text2);line-height:1.4;">
+        ${escHtml(q.feedback || '')}
+        ${hasSol && !isWrong ? `<br><button class="sol-toggle" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Show Solution</button>` : ''}
+        ${hasSol && isWrong ? `<br><button class="sol-toggle open" id="stoggle-${cardId}-${i}" onclick="toggleSolution('${solId}','stoggle-${cardId}-${i}')">📖 Hide Solution</button>` : ''}
+      </td>
+    </tr>${solRow}`;
+  }).join('');
+
+  const lowQWarning = (data.questions && data.questions.length > 0 && data.questions.length < 5)
+    ? `<div style="background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:8px;
+                   padding:10px 14px;margin-bottom:14px;font-size:13px;color:var(--yellow);">
+         ⚠️ Only ${data.questions.length} question(s) detected. If the paper has more questions, try the Retry button or re-upload a clearer image.
+       </div>` : '';
+
+  el.innerHTML = `
+    <div class="card" id="${cardId}" style="margin-top:0;">
+      ${lowQWarning}
+      <div class="result-hero">
+        <div class="grade-badge ${gradeClass(g)}" id="gbadge-${cardId}">${g}</div>
+        <div class="hero-info">
+          <div class="hero-name">${escHtml(name)}</div>
+          <div class="hero-marks" id="hmarks-${cardId}">${awarded} / ${avail} marks &nbsp;·&nbsp; ${data.paper_type || ''}</div>
+          <div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${data.assessment_type ? `<span class="tag" style="background:rgba(108,99,255,0.15);color:var(--accent);">${escHtml(data.assessment_type)} ${data.exercise_number ?? ''}</span>` : ''}
+            <span style="font-size:11px;color:var(--text2);">📅 ${data.marked_at || new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span>
+          </div>
+          <div class="progress-bar" style="margin-top:8px;width:200px;">
+            <div class="progress-fill" id="hbar-${cardId}" style="width:${Math.min(pct,100)}%;background:${barColor};"></div>
+          </div>
+        </div>
+        <div class="hero-pct" id="hpct-${cardId}">${pct}%</div>
+      </div>
+
+      ${qRows ? `
+      <div style="overflow-x:auto;margin-bottom:16px;">
+        <table class="q-table" id="qtable-${cardId}">
+          <thead><tr>
+            <th style="width:36px;">#</th>
+            <th>Question</th>
+            <th>Student's Answer</th>
+            <th style="width:90px;">Marks</th>
+            <th>Feedback &amp; Solution</th>
+          </tr></thead>
+          <tbody>${qRows}</tbody>
+        </table>
+      </div>
+      <div id="amendbar-${cardId}" style="display:none;" class="amend-bar">
+        <div class="unsaved-dot"></div>
+        <span>You have unsaved amendments</span>
+        <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${cardId}','${subId}')">💾 Save Changes</button>
+        <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${cardId}')">Cancel</button>
+      </div>` : ''}
+
+      ${data.overall_feedback || data.teacher_notes ? `
+      <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:16px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;letter-spacing:0.3px;">📋 Overall Assessment</div>
+        ${data.overall_feedback ? `
+        <div class="feedback-box" style="margin-bottom:10px;">
+          <strong style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--accent);display:block;margin-bottom:8px;">💬 Student Feedback</strong>
+          <div style="font-size:13px;line-height:1.7;color:var(--text);">${escHtml(data.overall_feedback)}</div>
+        </div>` : ''}
+        ${data.teacher_notes ? `
+        <div class="teacher-box">
+          <strong style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--yellow);display:block;margin-bottom:8px;">📝 Teacher Notes</strong>
+          <div style="font-size:13px;line-height:1.7;color:var(--text2);">${escHtml(data.teacher_notes)}</div>
+        </div>` : ''}
+      </div>` : ''}
+
+      ${containerId === 'mResult' ? `
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;">
+        <button class="btn btn-primary" onclick="startNewPaper()" style="gap:8px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Mark New Paper
+        </button>
+        <span style="font-size:12px;color:var(--text2);">Result saved to History</span>
+      </div>` : ''}
+    </div>`;
+}
+
+// ── Mark Amendment ────────────────────────────────────────────────────────────
+
+const pendingAmendments = {}; // cardId → { questionNumber: newMarks }
+
+function startEditMark(cardId, rowIdx, qNum, current, max, subId) {
+  const chipEl = document.getElementById(`chip-${cardId}-${rowIdx}`);
+  if (!chipEl) return;
+  // Replace chip with inline input
+  chipEl.innerHTML = `
+    <input class="mark-edit-input" id="inp-${cardId}-${rowIdx}"
+      type="number" min="0" max="${max}" value="${current}"
+      onchange="recordAmendment('${cardId}','${qNum}',this.value,'${rowIdx}',${max})"
+      onblur="recordAmendment('${cardId}','${qNum}',this.value,'${rowIdx}',${max})"
+    >
+    <span style="font-size:11px;color:var(--text2);">/${max}</span>`;
+  document.getElementById(`inp-${cardId}-${rowIdx}`)?.focus();
+  // Show the save bar
+  const bar = document.getElementById(`amendbar-${cardId}`);
+  if (bar) bar.style.display = 'flex';
+}
+
+function recordAmendment(cardId, qNum, val, rowIdx, max) {
+  const clamped = Math.max(0, Math.min(parseInt(val) || 0, max));
+  if (!pendingAmendments[cardId]) pendingAmendments[cardId] = {};
+  pendingAmendments[cardId][qNum] = clamped;
+  // Update the input to show clamped value
+  const inp = document.getElementById(`inp-${cardId}-${rowIdx}`);
+  if (inp) inp.value = clamped;
+}
+
+// ── Pending confirm state ─────────────────────────────────────────────────────
+let _pendingConfirm = null;  // { cardId, subId, studentName, changes }
+
+function saveAmendments(cardId, subId) {
+  const amendments = pendingAmendments[cardId];
+  if (!amendments || !Object.keys(amendments).length) return;
+
+  // Gather before/after info for each amended question
+  const changes = Object.entries(amendments).map(([qn, newMa]) => {
+    // Find the original mark from the chip element text (e.g. "2/3" → before=2)
+    const chipEl = [...document.querySelectorAll(`[id^="chip-${cardId}-"]`)]
+      .find(el => {
+        const row = el.closest('tr');
+        return row && row.querySelector('td')?.textContent.trim().replace('Q','') === String(qn);
+      });
+    const chipText = chipEl?.querySelector('.mark-chip')?.textContent || '';
+    const beforeMa = parseInt(chipText.split('/')[0]) ?? '?';
+    const mx       = parseInt(chipText.split('/')[1]) ?? '?';
+    return { qn, beforeMa, newMa, mx };
+  });
+
+  // Get student name from hero element
+  const heroName = document.querySelector(`#card-${cardId} .hero-name`)?.textContent || 'this student';
+
+  // Store pending confirm and open modal
+  _pendingConfirm = { cardId, subId };
+  document.getElementById('confirmStudentName').textContent = heroName;
+
+  const list = document.getElementById('confirmChangesList');
+  list.innerHTML = changes.map(c => `
+    <div class="confirm-change-row">
+      <span class="qnum">Q${c.qn}</span>
+      <span>
+        <span class="before">${c.beforeMa}/${c.mx}</span>
+        <span class="arrow">→</span>
+        <span class="after">${c.newMa}/${c.mx}</span>
+      </span>
+    </div>`).join('');
+
+  document.getElementById('confirmModal').classList.add('open');
+}
+
+function closeConfirmModal() {
+  document.getElementById('confirmModal').classList.remove('open');
+  _pendingConfirm = null;
+}
+
+async function confirmSaveAmendments() {
+  if (!_pendingConfirm) return;
+  const { cardId, subId } = _pendingConfirm;
+  closeConfirmModal();
+
+  const amendments = pendingAmendments[cardId];
+  const questions  = Object.entries(amendments).map(([qn, ma]) => ({
+    question_number: qn, marks_awarded: ma
+  }));
+
+  try {
+    const resp = await fetch(`${API}/submissions/${subId}/amend`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questions })
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || 'Save failed');
+    const updated = await resp.json();
+
+    // Update hero totals
+    const barColor = updated.percentage >= 70 ? 'var(--green)' : updated.percentage >= 50 ? 'var(--yellow)' : 'var(--red)';
+    const hmarks = document.getElementById(`hmarks-${cardId}`);
+    const hpct   = document.getElementById(`hpct-${cardId}`);
+    const hbar   = document.getElementById(`hbar-${cardId}`);
+    const gbadge = document.getElementById(`gbadge-${cardId}`);
+    if (hmarks) hmarks.innerHTML = `${updated.total_marks_awarded} / ${updated.total_marks_available} marks`;
+    if (hpct)   hpct.textContent = `${updated.percentage}%`;
+    if (hbar)   { hbar.style.width = `${Math.min(updated.percentage,100)}%`; hbar.style.background = barColor; }
+    if (gbadge) { gbadge.textContent = updated.grade; gbadge.className = `grade-badge ${gradeClass(updated.grade)}`; }
+
+    // Update each amended chip
+    updated.questions.forEach((q, i) => {
+      const chipEl = document.getElementById(`chip-${cardId}-${i}`);
+      if (!chipEl) return;
+      const ma = q.marks_awarded ?? 0;
+      const mx = q.marks_available ?? 0;
+      chipEl.innerHTML = q.amended
+        ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+        : markChip(ma, mx);
+    });
+
+    const bar = document.getElementById(`amendbar-${cardId}`);
+    if (bar) bar.style.display = 'none';
+    delete pendingAmendments[cardId];
+    toast('Marks saved successfully', 'ok');
+  } catch(e) {
+    toast('Save failed: ' + e.message, 'err');
+  }
+}
+
+function cancelAmendments(cardId) {
+  // Reload the page section — simplest rollback
+  delete pendingAmendments[cardId];
+  const bar = document.getElementById(`amendbar-${cardId}`);
+  if (bar) bar.style.display = 'none';
+  // Restore any open inputs back to chips by reloading history or re-rendering
+  toast('Amendments cancelled', 'info');
+  loadHistory();
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Solution toggle ───────────────────────────────────────────────────────
+
+function toggleSolution(solRowId, btnId) {
+  const row = document.getElementById(solRowId);
+  const btn = document.getElementById(btnId);
+  if (!row) return;
+  const isOpen = row.classList.toggle('open');
+  if (btn) {
+    btn.classList.toggle('open', isOpen);
+    btn.textContent = isOpen ? '📖 Hide Solution' : '📖 Show Solution';
+  }
+}
+
+// ── Mark Paper (single) ───────────────────────────────────────────────────
+
+function onMarkFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const zone = document.getElementById('mDropZone');
+  const label = document.getElementById('mFileName');
+  zone.classList.add('has-file');
+  label.textContent = file.name;
+  label.style.display = 'block';
+  document.getElementById('mMarkBtn').disabled = false;
+}
+
+// Drag-and-drop for Mark Paper
+(function() {
+  const zone = document.getElementById('mDropZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    // Inject into input
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    document.getElementById('mFile').files = dt.files;
+    onMarkFileSelect({ target: { files: dt.files } });
+  });
+})();
+
+async function markSinglePaper() {
+  const name       = document.getElementById('mName').value.trim();
+  const cls        = document.getElementById('mClass').value.trim();
+  const paper      = document.getElementById('mPaper').value;
+  const assessType = document.getElementById('mAssessType').value;
+  const exNum      = document.getElementById('mExerciseNum').value;
+  const file       = document.getElementById('mFile').files[0];
+
+  if (!name)  { toast('Enter the student name', 'err'); return; }
+  if (!file)  { toast('Upload the answer paper first', 'err'); return; }
+
+  loading(`Reading ${name}'s paper…<br>Gemma is separating questions from answers.<br>This may take up to 60 seconds.`);
+
+  try {
+    const fd = new FormData();
+    fd.append('student_name', name);
+    fd.append('class_name', cls);
+    fd.append('paper_type', paper);
+    fd.append('assessment_type', assessType);
+    fd.append('exercise_number', exNum);
+    fd.append('file', file);
+
+    const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, name);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
+    }
+    const data = await resp.json();
+    doneLoading();
+
+    document.getElementById('mResult').innerHTML = '';
+    // Warn if the AI returned 0 questions instead of silently showing 0/0
+    if (!data.questions || data.questions.length === 0) {
+      document.getElementById('mResult').innerHTML =
+        `<div class="card">
+          <div style="color:var(--yellow);font-weight:600;margin-bottom:10px;">⚠️ No questions detected in this paper</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.7;">
+            The AI couldn't read any questions from this file. Try the following:<br><br>
+            1. <strong>Use a clearer photo</strong> — make sure the whole page is visible and well-lit<br>
+            2. <strong>Try a JPG/PNG</strong> instead of PDF if you have a photo of the paper<br>
+            3. <strong>Test the AI connection</strong> — <a href="/api/debug/test-ai" target="_blank" style="color:var(--accent);">click here to run a connection test</a> and check for errors<br>
+            4. Make sure your Google API key has quota remaining at <a href="https://aistudio.google.com" target="_blank" style="color:var(--accent);">aistudio.google.com</a>
+          </div>
+        </div>`;
+      toast('⚠️ No questions detected — see guidance below', 'err');
+      return;
+    }
+    renderResult(data, 'mResult');
+    toast(`Marked! ${data.total_marks_awarded}/${data.total_marks_available} — Grade ${data.grade}`, 'ok');
+    document.getElementById('mResult').scrollIntoView({ behavior: 'smooth' });
+  } catch(e) {
+    doneLoading();
+    toast('Error: ' + e.message, 'err');
+    document.getElementById('mResult').innerHTML =
+      `<div class="card">
+        <div style="color:var(--red);font-weight:600;margin-bottom:10px;">❌ Marking failed</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.7;">
+          <strong>Error:</strong> ${escHtml(e.message)}<br><br>
+          <strong>Diagnose:</strong> <a href="/api/debug/test-ai" target="_blank" style="color:var(--accent);">Click here to test the AI connection</a>
+          — this will show the exact error from Google's API.
+        </div>
+      </div>`;
+  }
+}
+
+function clearMark() {
+  document.getElementById('mName').value = '';
+  document.getElementById('mClass').selectedIndex = 0;
+  document.getElementById('mFile').value = '';
+  document.getElementById('mFileName').style.display = 'none';
+  document.getElementById('mDropZone').classList.remove('has-file');
+  document.getElementById('mMarkBtn').disabled = true;
+  document.getElementById('mResult').innerHTML = '';
+}
+
+function startNewPaper() {
+  clearMark();
+  // Scroll the form back into view smoothly
+  document.getElementById('page-mark').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Focus the name field so the teacher can type straight away
+  setTimeout(() => document.getElementById('mName').focus(), 400);
+}
+
+// ── Batch Mark ────────────────────────────────────────────────────────────
+
+function addBatchRow() {
+  batchRowCount++;
+  const n = batchRowCount;
+  const row = document.createElement('div');
+  row.className = 'batch-row';
+  row.id = `brow-${n}`;
+  row.innerHTML = `
+    <span class="student-num">${n}</span>
+    <input type="text" placeholder="Student name" id="bname-${n}" style="flex:1;">
+    <label class="batch-file-label" id="blabel-${n}">
+      📎 Drop photo or PDF
+      <input type="file" accept="image/*,.pdf" onchange="onBatchFile(${n}, event)">
+    </label>
+    <button class="btn btn-danger btn-sm" onclick="removeBatchRow(${n})">✕</button>`;
+  document.getElementById('batchRows').appendChild(row);
+}
+
+function removeBatchRow(n) {
+  document.getElementById('brow-' + n)?.remove();
+}
+
+function onBatchFile(n, e) {
+  const file = e.target.files[0];
+  const label = document.getElementById('blabel-' + n);
+  if (file) {
+    label.classList.add('has-file');
+    const short = file.name.length > 22 ? file.name.slice(0,20) + '…' : file.name;
+    label.firstChild.textContent = '✅ ' + short;
+  }
+}
+
+// Store batch settings globally so retry can always access them
+let _batchSettings = {};
+
+async function markBatch() {
+  const cls        = document.getElementById('bClass').value.trim();
+  const paper      = document.getElementById('bPaper').value;
+  const assessType = document.getElementById('bAssessType').value;
+  const exNum      = document.getElementById('bExerciseNum').value;
+  if (!cls) { toast('Select a class', 'err'); return; }
+
+  // Save for retry buttons to use
+  _batchSettings = { cls, paper, assessType, exNum };
+
+  // Collect rows
+  const rows = document.querySelectorAll('.batch-row');
+  const entries = [];
+  for (const row of rows) {
+    const id   = row.id.replace('brow-', '');
+    const name = document.getElementById('bname-' + id)?.value.trim();
+    const inp  = row.querySelector('input[type=file]');
+    const file = inp?.files[0];
+    if (!name && !file) continue;
+    if (!name) { toast('Enter a name for every student', 'err'); return; }
+    if (!file) { toast(`Upload a paper for ${name}`, 'err'); return; }
+    entries.push({ name, file });
+  }
+  if (entries.length === 0) { toast('Add at least one student', 'err'); return; }
+
+  loading(`Marking ${entries.length} papers for ${cls}…<br>Gemma reads each paper individually.<br>Please wait — this may take a few minutes.`);
+
+  const results  = [];
+  const failed   = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const { name, file } = entries[i];
+
+    // Brief pause between papers to avoid API rate limits (skip before first)
+    if (i > 0) await new Promise(r => setTimeout(r, 3000));
+
+    document.getElementById('loadingMsg').innerHTML =
+      `Marking paper ${i+1} of ${entries.length}<br>
+       <strong>${escHtml(name)}</strong><br>
+       <span style="font-size:12px;color:#6ee7b7;">
+         ✅ ${results.length} done &nbsp;·&nbsp; ❌ ${failed.length} failed so far
+       </span><br>
+       <span style="font-size:11px;color:var(--text2);">Auto-retries on network errors. Please wait…</span>`;
+
+    try {
+      const fd = new FormData();
+      fd.append('student_name', name);
+      fd.append('class_name', cls);
+      fd.append('paper_type', paper);
+      fd.append('assessment_type', assessType);
+      fd.append('exercise_number', exNum);
+      fd.append('file', file);
+
+      const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, name);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error ${resp.status}`);
+      }
+      const data = await resp.json();
+      // Warn if < 5 questions were detected despite marking succeeding
+      if (data.questions && data.questions.length > 0 && data.questions.length < 5) {
+        console.warn(`[BATCH] ${name}: only ${data.questions.length} questions detected — may need retry`);
+      }
+      results.push({ ...data, _status: 'ok' });
+    } catch(e) {
+      console.error(`[BATCH] Failed for ${name}:`, e.message);
+      // Record the failure but DO NOT stop — continue to next student
+      failed.push({ student_name: name, file, error: e.message });
+    }
+  }
+
+  doneLoading();
+  renderBatchResults(cls, results, failed);
+
+  if (failed.length === 0) {
+    toast(`✅ All ${results.length} papers marked for ${cls}!`, 'ok');
+  } else if (results.length === 0) {
+    toast(`❌ All ${failed.length} papers failed — check connection and retry`, 'err');
+  } else {
+    toast(`✅ ${results.length} marked · ❌ ${failed.length} failed — see details below`, 'info');
+  }
+}
+
+// Store failed entries globally for retry
+let _failedEntries = [];
+
+function renderBatchResults(cls, results, failed = []) {
+  const el = document.getElementById('bResult');
+  _failedEntries = failed;
+
+  const avg = results.length
+    ? Math.round(results.reduce((s,r) => s + (r.percentage||0), 0) / results.length * 10) / 10
+    : 0;
+
+  const bannerColor = failed.length === 0 ? 'var(--green)' : results.length === 0 ? 'var(--red)' : 'var(--yellow)';
+  const bannerText  = failed.length === 0
+    ? `✅ All ${results.length} papers marked successfully`
+    : `✅ ${results.length} marked &nbsp;·&nbsp; ❌ ${failed.length} failed`;
+
+  const successRows = results.map(r => {
+    const g = r.grade || 'U';
+    return `<tr>
+      <td style="font-weight:600;">${escHtml(r.student_name || '—')}</td>
+      <td>${r.total_marks_awarded ?? 0} / ${r.total_marks_available ?? 0}</td>
+      <td>${r.percentage ?? 0}%</td>
+      <td><span class="grade-badge ${gradeClass(g)}" style="width:28px;height:28px;font-size:13px;display:inline-flex;">${g}</span></td>
+      <td style="font-size:12px;color:var(--text2);max-width:250px;">${escHtml((r.teacher_notes||'').slice(0,120))}</td>
+    </tr>`;
+  }).join('');
+
+  const failedRows = failed.map((f, fi) => `
+    <tr style="background:rgba(239,68,68,0.06);">
+      <td style="font-weight:600;color:var(--red);">❌ ${escHtml(f.student_name)}</td>
+      <td colspan="3" style="font-size:12px;color:var(--text2);">${escHtml(f.error)}</td>
+      <td><button class="btn btn-secondary btn-sm" onclick="retryOne(${fi})">↺ Retry</button></td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+        <div class="card-title" style="margin:0;">Class Results — ${escHtml(cls)}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:13px;color:var(--text2);">Avg: <strong style="color:var(--accent);">${avg}%</strong></span>
+          <button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export/${encodeURIComponent(cls)}')">⬇ Export CSV</button>
+          ${failed.length > 0 ? `<button class="btn btn-primary btn-sm" onclick="retryAllFailed()">↺ Retry All Failed (${failed.length})</button>` : ''}
+        </div>
+      </div>
+      <div style="font-size:12px;font-weight:600;padding:8px 12px;border-radius:7px;margin-bottom:14px;
+                  background:rgba(0,0,0,0.2);border:1px solid ${bannerColor};color:${bannerColor};">
+        ${bannerText}
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="q-table">
+          <thead><tr>
+            <th>Student</th><th>Marks</th><th>%</th><th>Grade</th><th>Notes / Error</th>
+          </tr></thead>
+          <tbody>${successRows}${failedRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // Individual result cards for successful ones
+  results.forEach((r, i) => {
+    const div = document.createElement('div');
+    div.id = `batchCard-${i}`;
+    el.appendChild(div);
+    renderResult(r, `batchCard-${i}`);
+  });
+
+  el.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function retryOne(failedIndex) {
+  const entry = _failedEntries[failedIndex];
+  if (!entry) return;
+  const { cls, paper, assessType, exNum } = _batchSettings;
+
+  toast(`Retrying ${entry.student_name}…`, 'info');
+  try {
+    const fd = new FormData();
+    fd.append('student_name', entry.student_name);
+    fd.append('class_name', cls);
+    fd.append('paper_type', paper);
+    fd.append('assessment_type', assessType);
+    fd.append('exercise_number', exNum);
+    fd.append('file', entry.file);
+    const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, entry.student_name);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
+    }
+    const data = await resp.json();
+    _failedEntries.splice(failedIndex, 1);
+    toast(`✅ ${entry.student_name} marked successfully`, 'ok');
+    // Append new result card
+    const container = document.getElementById('bResult');
+    const div = document.createElement('div');
+    const rid = `batchCard-retry-${Date.now()}`;
+    div.id = rid;
+    container.appendChild(div);
+    renderResult(data, rid);
+  } catch(e) {
+    toast(`❌ Still failing for ${entry.student_name}: ${e.message}`, 'err');
+  }
+}
+
+async function retryAllFailed() {
+  if (_failedEntries.length === 0) return;
+  toast(`Retrying ${_failedEntries.length} failed papers…`, 'info');
+  for (let i = _failedEntries.length - 1; i >= 0; i--) {
+    await retryOne(i);
+  }
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+
+const FORM_CLASSES = ['Form 3', 'Form 4', 'Form 5'];
+
+async function loadDashboard() {
+  try {
+    const classes = await api('/classes');
+
+    if (!classes.length) {
+      document.getElementById('dTotalPapers').textContent = '0';
+      document.getElementById('dAvgScore').textContent = '—';
+      document.getElementById('dClasses').textContent = '0';
+      document.getElementById('dTopGrade').textContent = '—';
+      document.getElementById('howItWorks').style.display = 'block';
+      return;
+    }
+
+    document.getElementById('howItWorks').style.display = 'none';
+
+    const total  = classes.reduce((s, c) => s + (c.submission_count || 0), 0);
+    const active = classes.filter(c => c.avg_percentage != null);
+    const avgPct = active.length
+      ? Math.round(active.reduce((s,c) => s + (c.avg_percentage||0), 0) / active.length * 10) / 10
+      : 0;
+
+    document.getElementById('dTotalPapers').textContent = total;
+    document.getElementById('dAvgScore').textContent    = avgPct ? `${avgPct}%` : '—';
+    document.getElementById('dClasses').textContent     = classes.length;
+
+    // Class averages table
+    const classCard = document.getElementById('classCard');
+    classCard.style.display = 'block';
+    document.getElementById('classTable').innerHTML = `
+      <table class="q-table">
+        <thead><tr><th>Class</th><th>Papers</th><th>Avg %</th><th></th></tr></thead>
+        <tbody>${classes.map(c => `<tr>
+          <td style="font-weight:500;">${escHtml(c.name)}</td>
+          <td>${c.submission_count || 0}</td>
+          <td style="color:var(--accent);font-weight:600;">${c.avg_percentage ?? '—'}%</td>
+          <td><button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export/${encodeURIComponent(c.name)}')">⬇ CSV</button></td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+
+    // Recent results across all classes
+    let allSubs = [];
+    for (const c of classes) {
+      const s = await api('/submissions/' + encodeURIComponent(c.name)).catch(() => []);
+      allSubs = allSubs.concat(s);
+    }
+    allSubs.sort((a, b) => (b.marked_at||'').localeCompare(a.marked_at||''));
+    const recent = allSubs.slice(0, 10);
+
+    // Top grade from all submissions
+    const gradePriority = {'A*':7,'A':6,'B':5,'C':4,'D':3,'E':2,'U':1};
+    const topGrade = allSubs.reduce((best, s) => {
+      return (gradePriority[s.grade]||0) > (gradePriority[best]||0) ? s.grade : best;
+    }, 'U');
+    document.getElementById('dTopGrade').textContent = topGrade;
+
+    if (recent.length) {
+      document.getElementById('dashRecent').innerHTML = recent.map(s => {
+        const g = s.grade || 'U';
+        const pct = s.percentage ?? 0;
+        const barColor = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+        return `<div class="history-row" style="cursor:default;">
+          <div class="h-grade grade-badge ${gradeClass(g)}" style="width:36px;height:36px;font-size:13px;">${g}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="h-name">${escHtml(s.student_name || '?')}</div>
+            <div class="h-meta">${escHtml(s.class_name||'')} · ${(s.marked_at||'').slice(0,10)}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div class="h-marks">${s.marks_awarded??0}/${s.max_marks??0}</div>
+            <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:3px;">
+              <span style="font-size:11px;color:var(--text2);">${pct}%</span>
+              <div style="width:60px;height:4px;border-radius:3px;background:var(--surface2);overflow:hidden;">
+                <div style="height:100%;border-radius:3px;width:${Math.min(pct,100)}%;background:${barColor};"></div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  } catch(e) {
+    console.error('Dashboard error:', e);
+    document.getElementById('howItWorks').style.display = 'block';
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+
+const ASSESS_ICON = {
+  'Class Exercise': '📝',
+  'Homework':       '🏠',
+  'Test':           '📋',
+  'Mid-Term Test':  '📊',
+  'Exam':           '🎓',
+};
+const ASSESS_ORDER = ['Class Exercise','Homework','Test','Mid-Term Test','Exam'];
+
+function groupSubmissions(subs) {
+  const map = {};
+  for (const s of subs) {
+    const type = s.assessment_type || 'Class Exercise';
+    const num  = s.exercise_number  || 1;
+    const cls  = s.class_name       || '';
+    const key  = `${type}||${num}||${cls}`;
+    if (!map[key]) map[key] = { type, num, cls, key, subs: [] };
+    map[key].subs.push(s);
+  }
+  return Object.values(map).sort((a, b) => {
+    const oi = ASSESS_ORDER.indexOf(a.type) - ASSESS_ORDER.indexOf(b.type);
+    if (oi !== 0) return oi;
+    if (a.num !== b.num) return a.num - b.num;
+    return a.cls.localeCompare(b.cls);
+  });
+}
+
+function toggleGroup(key) {
+  const el = document.getElementById('ag-' + key);
+  if (el) el.classList.toggle('open');
+}
+
+function toggleStudentFeedback(rowId, hasFb) {
+  if (!hasFb) return;
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  row.classList.toggle('fb-open');
+  const chev = row.querySelector('.fb-chevron-' + rowId);
+  if (chev) chev.style.transform = row.classList.contains('fb-open') ? 'rotate(90deg)' : '';
+}
+
+async function loadHistory() {
+  const filter = document.getElementById('hClassFilter').value;
+  try {
+    let subs = [];
+    if (filter) {
+      subs = await api('/submissions/' + encodeURIComponent(filter));
+    } else {
+      for (const cls of FORM_CLASSES) {
+        const s = await api('/submissions/' + encodeURIComponent(cls)).catch(() => []);
+        subs = subs.concat(s);
+      }
+    }
+
+    const el = document.getElementById('historyList');
+    if (!subs.length) {
+      el.innerHTML = '<div class="empty">No results yet. Mark some papers to see them here.</div>';
+      return;
+    }
+
+    const groups = groupSubmissions(subs);
+
+    el.innerHTML = groups.map(g => {
+      const safeKey  = g.key.replace(/[^a-z0-9]/gi, '_');
+      const icon     = ASSESS_ICON[g.type] || '📄';
+      const avgPct   = g.subs.length
+        ? Math.round(g.subs.reduce((s,r) => s + (r.percentage||0), 0) / g.subs.length * 10) / 10
+        : 0;
+      const avgColor   = avgPct >= 70 ? 'var(--green)' : avgPct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      const latestDate = g.subs.map(s => s.marked_at||'').sort().reverse()[0] || '';
+      const cls        = g.cls;
+
+      const gradeCount = {};
+      g.subs.forEach(s => { const gr = s.grade||'U'; gradeCount[gr]=(gradeCount[gr]||0)+1; });
+      const gradeSummary = ['A*','A','B','C','D','E','U']
+        .filter(gr => gradeCount[gr])
+        .map(gr => `<span style="font-size:11px;color:${gradeColor(gr)};font-weight:600;">${gr}:${gradeCount[gr]}</span>`)
+        .join(' ');
+
+      const studentRows = g.subs
+        .sort((a,b) => (b.percentage||0) - (a.percentage||0))
+        .map(s => {
+          const grade = s.grade || 'U';
+          const pct   = s.percentage ?? 0;
+          const bc    = pct >= 70 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+          const qs    = s.questions || [];
+          const hasFb = s.overall_feedback || s.teacher_notes || qs.length > 0;
+          const rowId = 'sr-' + (s.id || Math.random().toString(36).slice(2));
+
+          const hCardId = 'hcard-' + (s.id || rowId);
+          const hSubId  = s.id || '';
+          const qTableRows = qs.map((q, i) => {
+            const ma = q.marks_awarded  ?? 0;
+            const mx = q.marks_available ?? 0;
+            const qn = q.question_number ?? i+1;
+            const chip = q.amended
+              ? `<span class="mark-chip chip-amended" title="Teacher amended">${ma}/${mx} ✏️</span>`
+              : markChip(ma, mx);
+            return `<tr id="qrow-${hCardId}-${i}">
+              <td style="font-weight:600;color:var(--accent);white-space:nowrap;">Q${qn}</td>
+              <td style="max-width:200px;line-height:1.4;font-size:12px;">${escHtml(q.question_text||'—')}</td>
+              <td style="white-space:nowrap;">
+                <span id="chip-${hCardId}-${i}">${chip}</span>
+                ${hSubId ? `<button class="edit-mark-btn" title="Edit marks" onclick="startEditMark('${hCardId}',${i},'${qn}',${ma},${mx},'${hSubId}')">✏️</button>` : ''}
+              </td>
+              <td style="font-size:12px;color:var(--text2);line-height:1.4;">${escHtml(q.feedback||'')}</td>
+            </tr>`;
+          }).join('');
+
+          const feedbackPanel = hasFb ? `
+            <div class="assess-feedback-panel">
+              ${qs.length ? `
+                <div class="fb-label" style="color:var(--text2);margin-bottom:6px;">📊 Question Breakdown</div>
+                <div style="overflow-x:auto;margin-bottom:8px;">
+                  <table class="q-table" style="font-size:12px;">
+                    <thead><tr>
+                      <th style="width:36px;">#</th>
+                      <th>Question</th>
+                      <th style="width:80px;">Marks</th>
+                      <th>Feedback</th>
+                    </tr></thead>
+                    <tbody>${qTableRows}</tbody>
+                  </table>
+                </div>
+                <div id="amendbar-${hCardId}" style="display:none;" class="amend-bar">
+                  <div class="unsaved-dot"></div>
+                  <span>You have unsaved amendments</span>
+                  <button class="btn btn-primary btn-sm" style="margin-left:auto;" onclick="saveAmendments('${hCardId}','${hSubId}')">💾 Save Changes</button>
+                  <button class="btn btn-secondary btn-sm" onclick="cancelAmendments('${hCardId}')">Cancel</button>
+                </div>` : ''}
+              ${s.overall_feedback ? `
+                <div class="fb-label" style="color:var(--accent);margin-top:10px;">📋 Student Feedback</div>
+                <div class="fb-text" style="margin-bottom:${s.teacher_notes?'12px':'0'};">${escHtml(s.overall_feedback)}</div>` : ''}
+              ${s.teacher_notes ? `
+                <div class="fb-label" style="color:var(--yellow);margin-top:4px;">🗒️ Teacher Notes</div>
+                <div class="fb-text" style="color:var(--text2);">${escHtml(s.teacher_notes)}</div>` : ''}
+            </div>` : '';
+
+          const subId = s.id || '';
+          return `<div class="assess-student-row" id="${rowId}" onclick="toggleStudentFeedback('${rowId}', ${hasFb ? 'true' : 'false'})">
+            <div class="assess-student-main">
+              <div class="grade-badge ${gradeClass(grade)}" style="width:30px;height:30px;font-size:12px;flex-shrink:0;">${grade}</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(s.student_name||'?')}</div>
+                <div style="font-size:11px;color:var(--text2);">${(s.marked_at||'').slice(0,10)}${hasFb ? ' &nbsp;·&nbsp; <span style="color:var(--accent);">tap to expand</span>' : ''}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0;">
+                <div style="font-size:13px;font-weight:600;color:var(--accent);">${s.marks_awarded??0}/${s.max_marks??0}</div>
+                <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:2px;">
+                  <span style="font-size:11px;color:var(--text2);">${pct}%</span>
+                  <div class="mini-bar"><div class="mini-fill" style="width:${Math.min(pct,100)}%;background:${bc};"></div></div>
+                </div>
+              </div>
+              ${hasFb ? `<div style="font-size:14px;color:var(--text2);flex-shrink:0;margin-left:4px;" class="fb-chevron-${rowId}">›</div>` : ''}
+              <button class="del-btn" title="Delete this result" onclick="event.stopPropagation(); deleteSubmission('${subId}', '${rowId}', '${escHtml(s.student_name||'Student')}')">🗑</button>
+            </div>
+            ${feedbackPanel}
+          </div>`;
+        }).join('');
+
+      return `
+        <div class="assess-group" id="ag-${safeKey}">
+          <div class="assess-group-header" onclick="toggleGroup('${safeKey}')">
+            <div class="assess-icon">${icon}</div>
+            <div class="assess-title">
+              <strong>${escHtml(g.type)} ${g.num}</strong>
+              <span style="display:flex;align-items:center;gap:8px;margin-top:2px;">
+                <span style="background:rgba(96,165,250,0.15);color:var(--blue);padding:1px 8px;border-radius:20px;font-size:11px;font-weight:600;">${escHtml(cls)}</span>
+                <span>${latestDate.slice(0,10)} · ${g.subs.length} student${g.subs.length!==1?'s':''}</span>
+              </span>
+            </div>
+            <div class="assess-stats">
+              <div>
+                <div class="assess-avg" style="color:${avgColor};">${avgPct}%</div>
+                <div class="assess-count">class avg</div>
+              </div>
+              <div style="font-size:11px;line-height:1.8;">${gradeSummary}</div>
+            </div>
+            <div class="assess-chevron">›</div>
+          </div>
+          <div class="assess-body">
+            ${studentRows}
+            <div class="assess-footer">
+              <button class="btn btn-secondary btn-sm" onclick="window.open('${API}/export-exercise?assessment_type=${encodeURIComponent(g.type)}&exercise_number=${g.num}&class_name=${encodeURIComponent(cls)}')">
+                ⬇ Export ${escHtml(g.type)} ${g.num} — ${escHtml(cls)}
+              </button>
+              <button class="btn btn-danger btn-sm" style="margin-left:auto;" onclick="deleteGroup('${escHtml(g.type)}', ${g.num}, '${escHtml(cls)}', '${safeKey}')">
+                🗑 Delete Group
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('History error:', e);
+    document.getElementById('historyList').innerHTML =
+      `<div class="empty">Error loading history.</div>`;
+  }
+}
+
+async function deleteSubmission(subId, rowId, studentName) {
+  if (!subId) { toast('Cannot delete — no ID found', 'err'); return; }
+  if (!confirm(`Delete ${studentName}'s result? This cannot be undone.`)) return;
+  try {
+    await fetch(`${API}/submissions/${subId}`, { method: 'DELETE' });
+    const row = document.getElementById(rowId);
+    if (row) {
+      row.style.transition = 'opacity 0.3s, max-height 0.3s';
+      row.style.opacity = '0';
+      row.style.overflow = 'hidden';
+      row.style.maxHeight = row.offsetHeight + 'px';
+      setTimeout(() => { row.style.maxHeight = '0'; row.style.padding = '0'; }, 50);
+      setTimeout(() => row.remove(), 350);
+    }
+    toast(`${studentName}'s result deleted`, 'ok');
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'err');
+  }
+}
+
+async function deleteGroup(assessType, exerciseNum, cls, safeKey) {
+  if (!confirm(`Delete ALL results for ${assessType} ${exerciseNum} — ${cls}?\n\nThis will permanently remove every student's result in this group.`)) return;
+  try {
+    const url = `${API}/submissions/group/${encodeURIComponent(assessType)}/${exerciseNum}/${encodeURIComponent(cls)}`;
+    await fetch(url, { method: 'DELETE' });
+    const card = document.getElementById('ag-' + safeKey);
+    if (card) {
+      card.style.transition = 'opacity 0.3s, max-height 0.4s';
+      card.style.opacity = '0';
+      card.style.overflow = 'hidden';
+      card.style.maxHeight = card.offsetHeight + 'px';
+      setTimeout(() => { card.style.maxHeight = '0'; card.style.marginBottom = '0'; }, 50);
+      setTimeout(() => card.remove(), 400);
+    }
+    toast(`${assessType} ${exerciseNum} — ${cls} deleted`, 'ok');
+  } catch(e) {
+    toast('Delete failed: ' + e.message, 'err');
+  }
+}
+
+function exportClass() {
+  const cls = document.getElementById('hClassFilter').value;
+  if (!cls) { toast('Select a class to export, or use the Export button on each exercise group below', 'info'); return; }
+  window.open(API + '/export/' + encodeURIComponent(cls));
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+addBatchRow(); addBatchRow(); addBatchRow();
+
+checkHealth();
+setInterval(checkHealth, 30000);
+loadDashboard();
+</script>
+</body>
+</html>
