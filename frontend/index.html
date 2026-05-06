@@ -6,11 +6,11 @@
 <title>SankofahScriptAI — Cambridge 0580</title>
 <style>
 :root {
-  --bg:#0f1117; --surface:#1a1d27; --surface2:#232733;
-  --border:#2e3348; --text:#e8eaed; --text2:#9aa0b4;
-  --accent:#6c63ff; --accent2:#8b83ff;
-  --green:#34d399; --red:#f87171; --yellow:#fbbf24;
-  --blue:#60a5fa; --purple:#c084fc; --orange:#fb923c;
+  --bg:#f4f5f9; --surface:#ffffff; --surface2:#eef0f6;
+  --border:#dde0ea; --text:#1a1d2e; --text2:#6b7280;
+  --accent:#6c63ff; --accent2:#5a52e0;
+  --green:#059669; --red:#dc2626; --yellow:#d97706;
+  --blue:#2563eb; --purple:#7c3aed; --orange:#ea580c;
   --radius:12px;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -104,7 +104,7 @@ textarea{resize:vertical;min-height:80px;}
 .q-table th{text-align:left;padding:8px 12px;background:var(--surface2);color:var(--text2);font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);}
 .q-table td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top;}
 .q-table tr:last-child td{border-bottom:none;}
-.q-table tr:hover td{background:rgba(255,255,255,0.02);}
+.q-table tr:hover td{background:rgba(0,0,0,0.025);}
 .mark-chip{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;}
 .chip-full{background:rgba(52,211,153,0.15);color:var(--green);}
 .chip-part{background:rgba(251,191,36,0.15);color:var(--yellow);}
@@ -125,9 +125,9 @@ tr:hover .edit-mark-btn{opacity:1;}
 .unsaved-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);flex-shrink:0;}
 
 /* ── Confirm modal ── */
-#confirmModal{display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.7);align-items:center;justify-content:center;}
+#confirmModal{display:none;position:fixed;inset:0;z-index:300;background:rgba(26,29,46,0.45);align-items:center;justify-content:center;}
 #confirmModal.open{display:flex;}
-.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5);}
+.confirm-box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.12);}
 .confirm-box h3{margin:0 0 6px;font-size:16px;color:var(--text);}
 .confirm-box p{margin:0 0 18px;font-size:13px;color:var(--text2);line-height:1.6;}
 .confirm-changes{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:20px;font-size:13px;}
@@ -166,7 +166,7 @@ tr:hover .edit-mark-btn{opacity:1;}
 .tag-err{background:rgba(248,113,113,0.15);color:var(--red);}
 
 /* ── Loading overlay ── */
-#loadingOverlay{display:none;position:fixed;inset:0;background:rgba(15,17,23,0.85);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
+#loadingOverlay{display:none;position:fixed;inset:0;background:rgba(244,245,249,0.88);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
 #loadingOverlay.show{display:flex;}
 .spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
@@ -175,9 +175,9 @@ tr:hover .edit-mark-btn{opacity:1;}
 /* ── Toast ── */
 #toast{position:fixed;bottom:24px;right:24px;z-index:200;display:flex;flex-direction:column;gap:8px;}
 .toast-item{padding:12px 18px;border-radius:9px;font-size:13px;font-weight:500;animation:slideIn 0.25s ease;box-shadow:0 4px 20px rgba(0,0,0,0.4);}
-.toast-ok{background:#1a3a2a;border:1px solid var(--green);color:var(--green);}
-.toast-err{background:#3a1a1a;border:1px solid var(--red);color:var(--red);}
-.toast-info{background:var(--surface2);border:1px solid var(--border);color:var(--text);}
+.toast-ok{background:#ecfdf5;border:1px solid var(--green);color:var(--green);}
+.toast-err{background:#fef2f2;border:1px solid var(--red);color:var(--red);}
+.toast-info{background:var(--surface);border:1px solid var(--border);color:var(--text);}
 @keyframes slideIn{from{transform:translateX(60px);opacity:0;}to{transform:translateX(0);opacity:1;}}
 
 /* ── Misc ── */
@@ -197,7 +197,7 @@ tr:hover .edit-mark-btn{opacity:1;}
 .sol-answer-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);white-space:nowrap;}
 .sol-answer-value{font-size:14px;font-weight:700;color:var(--text);background:rgba(52,211,153,0.12);border-radius:6px;padding:3px 10px;border:1px solid rgba(52,211,153,0.25);}
 .sol-steps-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--green);margin-bottom:6px;}
-.sol-steps{font-size:13px;line-height:1.8;color:var(--text);background:rgba(255,255,255,0.03);border-radius:8px;padding:12px 14px;border:1px solid var(--border);white-space:pre-wrap;font-family:inherit;}
+.sol-steps{font-size:13px;line-height:1.8;color:var(--text);background:rgba(0,0,0,0.025);border-radius:8px;padding:12px 14px;border:1px solid var(--border);white-space:pre-wrap;font-family:inherit;}
 
 /* ── Assessment groups (History) ── */
 .assess-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;}
@@ -222,7 +222,7 @@ tr:hover .edit-mark-btn{opacity:1;}
 .del-btn:hover{background:rgba(248,113,113,0.12);}
 .assess-student-main:hover .del-btn{opacity:1;}
 .assess-student-row.fb-open .assess-student-main{background:var(--surface2);}
-.assess-feedback-panel{display:none;padding:12px 18px 16px 18px;border-top:1px dashed var(--border);background:rgba(108,99,255,0.04);}
+.assess-feedback-panel{display:none;padding:12px 18px 16px 18px;border-top:1px dashed var(--border);background:rgba(108,99,255,0.05);}
 .assess-student-row.fb-open .assess-feedback-panel{display:block;}
 .fb-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
 .fb-text{font-size:13px;line-height:1.6;color:var(--text);}
