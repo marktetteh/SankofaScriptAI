@@ -1,17 +1,23 @@
-app = "sankofascriptai"
-primary_region = "lhr"
+# fly.toml app configuration file generated for sankofascriptai on 2026-05-06T22:39:45Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'sankofascriptai'
+primary_region = 'lhr'
 
 [build]
-dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [http_service]
-internal_port = 7860
-force_https = true
-auto_stop_machines = false
-auto_start_machines = true
-min_machines_running = 1
+  internal_port = 7860
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
 
 [[vm]]
-memory = "512mb"
-cpu_kind = "shared"
-cpus = 1
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 512
