@@ -239,9 +239,12 @@ tr:hover .edit-mark-btn{opacity:1;}
 <aside class="sidebar">
   <div class="logo">
     <div class="logo-icon">S</div>
-    <h1>SankofahScriptAI</h1>
+    <div>
+      <h1>SankofahScriptAI</h1>
+      <div style="font-size:10px;color:var(--text2);font-weight:500;margin-top:1px;letter-spacing:0.2px;">Cambridge IGCSE Mathematics</div>
+    </div>
   </div>
-  <div class="logo-sub">AI-assisted marking for modern classrooms</div>
+  <div class="logo-sub">0580 &nbsp;·&nbsp; Core &amp; Extended</div>
 
   <button class="nav-item active" onclick="showPage('dashboard')">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -410,8 +413,10 @@ tr:hover .edit-mark-btn{opacity:1;}
           <label>Paper Type</label>
           <select id="mPaper">
             <option value="Auto-detect">Auto-detect</option>
-            <option value="Core">Core</option>
-            <option value="Extended">Extended</option>
+            <option value="Core Paper 1">Core — Paper 1 (0580/1)</option>
+            <option value="Core Paper 3">Core — Paper 3 (0580/3)</option>
+            <option value="Extended Paper 2">Extended — Paper 2 (0580/2)</option>
+            <option value="Extended Paper 4">Extended — Paper 4 (0580/4)</option>
           </select>
         </div>
       </div>
@@ -461,8 +466,10 @@ tr:hover .edit-mark-btn{opacity:1;}
           <label>Paper Type</label>
           <select id="bPaper">
             <option value="Auto-detect">Auto-detect</option>
-            <option value="Core">Core</option>
-            <option value="Extended">Extended</option>
+            <option value="Core Paper 1">Core — Paper 1 (0580/1)</option>
+            <option value="Core Paper 3">Core — Paper 3 (0580/3)</option>
+            <option value="Extended Paper 2">Extended — Paper 2 (0580/2)</option>
+            <option value="Extended Paper 4">Extended — Paper 4 (0580/4)</option>
           </select>
         </div>
       </div>
@@ -746,6 +753,7 @@ function renderResult(data, containerId) {
           <div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             ${data.assessment_type ? `<span class="tag" style="background:rgba(108,99,255,0.15);color:var(--accent);">${escHtml(data.assessment_type)} ${data.exercise_number ?? ''}</span>` : ''}
             <span style="font-size:11px;color:var(--text2);">📅 ${data.marked_at || new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})}</span>
+            ${data._elapsedSecs ? `<span style="font-size:11px;color:var(--green);">⏱ Marked in ${data._elapsedSecs}s</span>` : ''}
           </div>
           <div class="progress-bar" style="margin-top:8px;width:200px;">
             <div class="progress-fill" id="hbar-${cardId}" style="width:${Math.min(pct,100)}%;background:${barColor};"></div>
@@ -790,10 +798,14 @@ function renderResult(data, containerId) {
       </div>` : ''}
 
       ${containerId === 'mResult' ? `
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;">
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="btn btn-primary" onclick="startNewPaper()" style="gap:8px;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Mark New Paper
+        </button>
+        <button class="btn btn-secondary" onclick="remarkPaper()" style="gap:8px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Remark Paper
         </button>
         <span style="font-size:12px;color:var(--text2);">Result saved to History</span>
       </div>` : ''}
@@ -956,6 +968,9 @@ function toggleSolution(solRowId, btnId) {
 
 // ── Mark Paper (single) ───────────────────────────────────────────────────
 
+let _markStart = 0;
+let _lastMarkFormData = null;  // stored for remark
+
 function onMarkFileSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -995,6 +1010,9 @@ async function markSinglePaper() {
   if (!name)  { toast('Enter the student name', 'err'); return; }
   if (!file)  { toast('Upload the answer paper first', 'err'); return; }
 
+  _markStart = Date.now();
+  _lastMarkFormData = { name, cls, paper, assessType, exNum, file };
+
   loading(`Reading ${name}'s paper…<br>Gemma is separating questions from answers.<br>This may take up to 60 seconds.`);
 
   try {
@@ -1013,6 +1031,7 @@ async function markSinglePaper() {
     }
     const data = await resp.json();
     doneLoading();
+    data._elapsedSecs = Math.round((Date.now() - _markStart) / 1000);
 
     document.getElementById('mResult').innerHTML = '';
     // Warn if the AI returned 0 questions instead of silently showing 0/0
@@ -1065,6 +1084,44 @@ function startNewPaper() {
   document.getElementById('page-mark').scrollIntoView({ behavior: 'smooth', block: 'start' });
   // Focus the name field so the teacher can type straight away
   setTimeout(() => document.getElementById('mName').focus(), 400);
+}
+
+async function remarkPaper() {
+  if (!_lastMarkFormData) { toast('No paper to remark — upload one first', 'err'); return; }
+  const { name, cls, paper, assessType, exNum, file } = _lastMarkFormData;
+
+  _markStart = Date.now();
+  loading(`Re-marking ${name}'s paper…<br>Gemma is taking a fresh look.<br>This may take up to 60 seconds.`);
+
+  try {
+    const fd = new FormData();
+    fd.append('student_name', name);
+    fd.append('class_name', cls);
+    fd.append('paper_type', paper);
+    fd.append('assessment_type', assessType);
+    fd.append('exercise_number', exNum);
+    fd.append('file', file);
+
+    const resp = await fetchWithRetry(API + '/mark/paper', { method: 'POST', body: fd }, 480000, name);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Server error ${resp.status}`);
+    }
+    const data = await resp.json();
+    doneLoading();
+    data._elapsedSecs = Math.round((Date.now() - _markStart) / 1000);
+
+    if (!data.questions || data.questions.length === 0) {
+      toast('⚠️ No questions detected on remark — try a clearer image', 'err');
+      return;
+    }
+    renderResult(data, 'mResult');
+    toast(`Remarked! ${data.total_marks_awarded}/${data.total_marks_available} — Grade ${data.grade}`, 'ok');
+    document.getElementById('mResult').scrollIntoView({ behavior: 'smooth' });
+  } catch(e) {
+    doneLoading();
+    toast('Remark failed: ' + e.message, 'err');
+  }
 }
 
 // ── Batch Mark ────────────────────────────────────────────────────────────
